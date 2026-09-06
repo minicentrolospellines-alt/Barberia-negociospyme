@@ -51,6 +51,11 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.max
 
 private val Fondo = Color(0xFF101010)
@@ -86,7 +91,8 @@ data class ClientItem(
     val phone: String,
     val visits: Int,
     val spent: Int,
-    val notes: String
+    val notes: String,
+    val rewardsRedeemed: Int = 0
 )
 
 data class BarberItem(
@@ -141,12 +147,89 @@ data class CashClose(
     val note: String
 )
 
+data class ProductItem(
+    val id: Long,
+    val name: String,
+    val price: Int,
+    val stock: Int,
+    val minStock: Int,
+    val active: Boolean = true
+)
+
 data class ChargeDraft(
     val payment: String,
     val extra: Int,
     val discount: Int,
     val tip: Int
 )
+
+data class CloudSession(
+    val token: String,
+    val barberiaId: Long,
+    val barberiaName: String,
+    val userName: String,
+    val userEmail: String
+)
+
+object ApiClient {
+    private const val BASE_URL = "https://appbarberia.negociospyme.cl"
+
+    suspend fun login(email: String, password: String): Result<CloudSession> = withContext(Dispatchers.IO) {
+        runCatching {
+            val payload = JSONObject().apply {
+                put("email", email.trim())
+                put("password", password)
+            }
+            val response = postJson("/api/login.php", payload)
+            if (!response.optBoolean("ok", false)) {
+                throw IllegalStateException(response.optString("error", "No se pudo iniciar sesión"))
+            }
+            val user = response.getJSONObject("usuario")
+            val shop = response.getJSONObject("barberia")
+            CloudSession(
+                token = response.getString("token"),
+                barberiaId = shop.optLong("id"),
+                barberiaName = shop.optString("nombre", "Barbería"),
+                userName = user.optString("nombre", "Usuario"),
+                userEmail = user.optString("email", email.trim())
+            )
+        }
+    }
+
+    suspend fun validateSession(token: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val conn = (URL("$BASE_URL/api/me.php").openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 10000
+                readTimeout = 10000
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("Authorization", "Bearer $token")
+            }
+            val body = readResponse(conn)
+            JSONObject(body).optBoolean("ok", false)
+        }.getOrDefault(false)
+    }
+
+    private fun postJson(path: String, payload: JSONObject): JSONObject {
+        val conn = (URL(BASE_URL + path).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 12000
+            readTimeout = 12000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/json")
+        }
+        conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+        val body = readResponse(conn)
+        return JSONObject(body)
+    }
+
+    private fun readResponse(conn: HttpURLConnection): String {
+        val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+        return stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+            ?: "{\"ok\":false,\"error\":\"Respuesta vacía del servidor\"}"
+    }
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -256,11 +339,15 @@ object NotificationHelper {
 fun BarberiaApp() {
     val context = LocalContext.current
 
+    val savedCloudToken = remember(context) { LocalStore.getCloudToken(context) }
     var loggedIn by remember { mutableStateOf(false) }
+    var checkingSession by remember { mutableStateOf(savedCloudToken.isNotBlank()) }
     var screen by remember { mutableStateOf("inicio") }
     var shopName by remember { mutableStateOf(LocalStore.getShopName(context)) }
     var shopPhone by remember { mutableStateOf(LocalStore.getShopPhone(context)) }
     var bookingLink by remember { mutableStateOf(LocalStore.getBookingLink(context)) }
+    var loyaltyEvery by remember { mutableStateOf(LocalStore.getLoyaltyEvery(context)) }
+    var loyaltyReward by remember { mutableStateOf(LocalStore.getLoyaltyReward(context)) }
 
     val appointments = remember(context) { mutableStateListOf<Appointment>().also { it.addAll(LocalStore.loadAppointments(context)) } }
     val clients = remember(context) { mutableStateListOf<ClientItem>().also { it.addAll(LocalStore.loadClients(context)) } }
@@ -269,6 +356,30 @@ fun BarberiaApp() {
     val sales = remember(context) { mutableStateListOf<SaleItem>().also { it.addAll(LocalStore.loadSales(context)) } }
     val blocks = remember(context) { mutableStateListOf<ScheduleBlock>().also { it.addAll(LocalStore.loadBlocks(context)) } }
     val cashCloses = remember(context) { mutableStateListOf<CashClose>().also { it.addAll(LocalStore.loadCashCloses(context)) } }
+    val products = remember(context) { mutableStateListOf<ProductItem>().also { it.addAll(LocalStore.loadProducts(context)) } }
+
+    LaunchedEffect(savedCloudToken) {
+        if (savedCloudToken.isNotBlank()) {
+            val valid = ApiClient.validateSession(savedCloudToken)
+            if (valid) {
+                loggedIn = true
+            } else {
+                LocalStore.clearCloudSession(context)
+            }
+        }
+        checkingSession = false
+    }
+
+    if (checkingSession) {
+        Box(Modifier.fillMaxSize().background(Fondo), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Dorado)
+                Spacer(Modifier.height(12.dp))
+                Text("Conectando con NegociosPyme Cloud...", color = Gris)
+            }
+        }
+        return
+    }
 
     fun persistAppointment(appointment: Appointment, isNew: Boolean) {
         if (isNew) {
@@ -288,7 +399,20 @@ fun BarberiaApp() {
     }
 
     if (!loggedIn) {
-        LoginScreen(shopName = shopName, onLogin = { loggedIn = true })
+        LoginScreen(
+            shopName = shopName,
+            savedEmail = LocalStore.getCloudEmail(context),
+            onLogin = { email, password ->
+                val result = ApiClient.login(email, password)
+                result.onSuccess { session ->
+                    LocalStore.saveCloudSession(context, session)
+                    shopName = session.barberiaName
+                    LocalStore.setShopName(context, session.barberiaName)
+                    loggedIn = true
+                }
+                result
+            }
+        )
         return
     }
 
@@ -376,9 +500,24 @@ fun BarberiaApp() {
                             services = services,
                             barbers = barbers,
                             cashCloses = cashCloses,
-                            onAddSale = {
-                                sales.add(0, it)
+                            onAddSale = { sale ->
+                                sales.add(0, sale)
                                 LocalStore.saveSales(context, sales)
+
+                                val saleClient = sale.client.trim()
+                                if (saleClient.isNotBlank() && !saleClient.equals("Venta directa", true)) {
+                                    val clientIndex = clients.indexOfFirst { it.name.equals(saleClient, true) }
+                                    if (clientIndex >= 0) {
+                                        val oldClient = clients[clientIndex]
+                                        clients[clientIndex] = oldClient.copy(
+                                            visits = oldClient.visits + 1,
+                                            spent = oldClient.spent + sale.amount
+                                        )
+                                    } else {
+                                        clients.add(ClientItem(System.currentTimeMillis(), saleClient, "", 1, sale.amount, ""))
+                                    }
+                                    LocalStore.saveClients(context, clients)
+                                }
                             },
                             onCloseCash = {
                                 cashCloses.add(0, it)
@@ -395,9 +534,14 @@ fun BarberiaApp() {
                             onBarbers = { screen = "barberos" },
                             onServices = { screen = "servicios" },
                             onCommissions = { screen = "comisiones" },
+                            onLoyalty = { screen = "fidelizacion" },
+                            onInventory = { screen = "inventario" },
                             onQr = { screen = "qr" },
                             onSettings = { screen = "config" },
-                            onLogout = { loggedIn = false }
+                            onLogout = {
+                                LocalStore.clearCloudSession(context)
+                                loggedIn = false
+                            }
                         )
                     }
                 }
@@ -419,6 +563,76 @@ fun BarberiaApp() {
         })
 
         "comisiones" -> CommissionsScreen(sales, barbers, services, { screen = "mas" })
+
+        "fidelizacion" -> LoyaltyScreen(
+            clients = clients,
+            rewardEvery = loyaltyEvery,
+            rewardText = loyaltyReward,
+            onBack = { screen = "mas" },
+            onRedeem = { client ->
+                val index = clients.indexOfFirst { it.id == client.id }
+                if (index >= 0) {
+                    clients[index] = clients[index].copy(rewardsRedeemed = clients[index].rewardsRedeemed + 1)
+                    LocalStore.saveClients(context, clients)
+                }
+            },
+            onSaveSettings = { every, reward ->
+                loyaltyEvery = every.coerceAtLeast(1)
+                loyaltyReward = reward.ifBlank { "Corte gratis" }
+                LocalStore.setLoyaltyEvery(context, loyaltyEvery)
+                LocalStore.setLoyaltyReward(context, loyaltyReward)
+            }
+        )
+
+        "inventario" -> InventoryScreen(
+            products = products,
+            onBack = { screen = "mas" },
+            onAdd = { product ->
+                products.add(product)
+                LocalStore.saveProducts(context, products)
+            },
+            onAdjustStock = { product, delta ->
+                val index = products.indexOfFirst { it.id == product.id }
+                if (index >= 0) {
+                    products[index] = products[index].copy(stock = max(0, products[index].stock + delta))
+                    LocalStore.saveProducts(context, products)
+                }
+            },
+            onToggle = { product ->
+                val index = products.indexOfFirst { it.id == product.id }
+                if (index >= 0) {
+                    products[index] = products[index].copy(active = !products[index].active)
+                    LocalStore.saveProducts(context, products)
+                }
+            },
+            onSell = { product, quantity, payment ->
+                val index = products.indexOfFirst { it.id == product.id }
+                if (index >= 0 && quantity > 0 && products[index].stock >= quantity) {
+                    val total = product.price * quantity
+                    products[index] = products[index].copy(stock = products[index].stock - quantity)
+                    LocalStore.saveProducts(context, products)
+                    sales.add(
+                        0,
+                        SaleItem(
+                            id = System.currentTimeMillis(),
+                            client = "Venta directa",
+                            service = "Producto: ${product.name} x$quantity",
+                            barber = "Tienda",
+                            amount = total,
+                            payment = payment,
+                            date = today(),
+                            time = nowTime(),
+                            serviceBase = 0,
+                            extra = total,
+                            discount = 0,
+                            tip = 0,
+                            commissionAmount = 0
+                        )
+                    )
+                    LocalStore.saveSales(context, sales)
+                }
+            }
+        )
 
         "qr" -> QrScreen(
             shopName = shopName,
@@ -460,9 +674,17 @@ private fun RowScope.BottomItem(route: String, label: String, icon: ImageVector,
 }
 
 @Composable
-fun LoginScreen(shopName: String, onLogin: () -> Unit) {
-    var email by remember { mutableStateOf("admin@barberia.cl") }
-    var password by remember { mutableStateOf("123456") }
+fun LoginScreen(
+    shopName: String,
+    savedEmail: String,
+    onLogin: suspend (String, String) -> Result<CloudSession>
+) {
+    var email by remember { mutableStateOf(savedEmail) }
+    var password by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+
     Column(
         modifier = Modifier.fillMaxSize().background(Fondo).padding(24.dp),
         verticalArrangement = Arrangement.Center
@@ -473,16 +695,71 @@ fun LoginScreen(shopName: String, onLogin: () -> Unit) {
         Spacer(Modifier.height(20.dp))
         Text("BARBERÍA", color = Dorado, fontSize = 34.sp, fontWeight = FontWeight.Black)
         Text(shopName, color = Color.White, fontSize = 18.sp)
-        Spacer(Modifier.height(28.dp))
-        OutlinedTextField(email, { email = it }, label = { Text("Correo") }, leadingIcon = { Icon(Icons.Default.Email, null) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(8.dp))
+        Text("Cuenta conectada a NegociosPyme Cloud", color = Verde, fontSize = 12.sp)
+        Spacer(Modifier.height(24.dp))
+
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it; error = "" },
+            label = { Text("Correo") },
+            leadingIcon = { Icon(Icons.Default.Email, null) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            enabled = !loading,
+            modifier = Modifier.fillMaxWidth()
+        )
         Spacer(Modifier.height(12.dp))
-        OutlinedTextField(password, { password = it }, label = { Text("Contraseña") }, leadingIcon = { Icon(Icons.Default.Lock, null) }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it; error = "" },
+            label = { Text("Contraseña") },
+            leadingIcon = { Icon(Icons.Default.Lock, null) },
+            visualTransformation = PasswordVisualTransformation(),
+            singleLine = true,
+            enabled = !loading,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        if (error.isNotBlank()) {
+            Spacer(Modifier.height(12.dp))
+            Surface(color = Rojo.copy(alpha = .16f), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                Text(error, color = Rojo, modifier = Modifier.padding(12.dp), fontSize = 13.sp)
+            }
+        }
+
         Spacer(Modifier.height(20.dp))
-        Button(onClick = onLogin, modifier = Modifier.fillMaxWidth().height(54.dp), colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black), shape = RoundedCornerShape(15.dp)) {
-            Text("INGRESAR", fontWeight = FontWeight.Bold)
+        Button(
+            onClick = {
+                if (email.isBlank() || password.isBlank()) {
+                    error = "Ingresa correo y contraseña."
+                } else {
+                    loading = true
+                    error = ""
+                    scope.launch {
+                        val result = onLogin(email.trim(), password)
+                        if (result.isFailure) {
+                            error = result.exceptionOrNull()?.message ?: "No se pudo conectar con el servidor."
+                        }
+                        loading = false
+                    }
+                }
+            },
+            enabled = !loading,
+            modifier = Modifier.fillMaxWidth().height(54.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black),
+            shape = RoundedCornerShape(15.dp)
+        ) {
+            if (loading) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.Black)
+                Spacer(Modifier.width(10.dp))
+                Text("CONECTANDO...", fontWeight = FontWeight.Bold)
+            } else {
+                Text("INGRESAR", fontWeight = FontWeight.Bold)
+            }
         }
         Spacer(Modifier.height(12.dp))
-        Text("v3 · agenda, reservas, avisos, caja y comisiones", color = Gris, fontSize = 12.sp)
+        Text("v5 · inicio de sesión real en la nube", color = Gris, fontSize = 12.sp)
     }
 }
 
@@ -1013,13 +1290,371 @@ fun NewClientDialog(onDismiss: () -> Unit, onSave: (ClientItem) -> Unit) {
     } }, confirmButton = { Button(onClick = { if (name.isNotBlank()) onSave(ClientItem(System.currentTimeMillis(), name.trim(), phone.trim(), 0, 0, notes.trim())) }, colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)) { Text("Guardar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
 }
 
+
 @Composable
-fun MoreScreen(onBarbers: () -> Unit, onServices: () -> Unit, onCommissions: () -> Unit, onQr: () -> Unit, onSettings: () -> Unit, onLogout: () -> Unit) {
+fun LoyaltyScreen(
+    clients: List<ClientItem>,
+    rewardEvery: Int,
+    rewardText: String,
+    onBack: () -> Unit,
+    onRedeem: (ClientItem) -> Unit,
+    onSaveSettings: (Int, String) -> Unit
+) {
+    var showSettings by remember { mutableStateOf(false) }
+    val safeEvery = rewardEvery.coerceAtLeast(1)
+    val sorted = clients.sortedByDescending { it.visits }
+
+    Scaffold(
+        containerColor = Fondo,
+        topBar = { BackHeader("Fidelización", onBack) },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showSettings = true }, containerColor = Dorado) {
+                Icon(Icons.Default.Settings, null, tint = Color.Black)
+            }
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item {
+                Surface(color = Dorado.copy(alpha = 0.12f), shape = RoundedCornerShape(16.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(15.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.CardGiftcard, null, tint = Dorado)
+                            Spacer(Modifier.width(10.dp))
+                            Text("Premio cada $safeEvery visitas", color = Dorado, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(rewardText, color = Color.White)
+                        Text("Los premios se calculan con las visitas registradas en caja.", color = Gris, fontSize = 11.sp)
+                    }
+                }
+            }
+
+            if (sorted.isEmpty()) item { EmptyCard("Todavía no hay clientes.") }
+
+            items(sorted, key = { it.id }) { client ->
+                val earnedRewards = client.visits / safeEvery
+                val availableRewards = max(0, earnedRewards - client.rewardsRedeemed)
+                val progress = client.visits % safeEvery
+                Surface(color = Tarjeta, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(15.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(color = Dorado.copy(alpha = 0.15f), shape = RoundedCornerShape(50)) {
+                                Icon(Icons.Default.Person, null, tint = Dorado, modifier = Modifier.padding(10.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(client.name, color = Color.White, fontWeight = FontWeight.Bold)
+                                Text("${client.visits} visitas · ${money(client.spent)}", color = Gris, fontSize = 12.sp)
+                            }
+                            if (availableRewards > 0) {
+                                Surface(color = Verde.copy(alpha = 0.15f), shape = RoundedCornerShape(10.dp)) {
+                                    Text("$availableRewards premio${if (availableRewards == 1) "" else "s"}", color = Verde, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp))
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        LinearProgressIndicator(
+                            progress = { progress.toFloat() / safeEvery.toFloat() },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Dorado,
+                            trackColor = Tarjeta2
+                        )
+                        Spacer(Modifier.height(5.dp))
+                        Text("$progress de $safeEvery para el próximo premio", color = Gris, fontSize = 11.sp)
+                        if (availableRewards > 0) {
+                            Spacer(Modifier.height(10.dp))
+                            Button(
+                                onClick = { onRedeem(client) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Redeem, null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Canjear: $rewardText")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showSettings) {
+        LoyaltySettingsDialog(
+            currentEvery = safeEvery,
+            currentReward = rewardText,
+            onDismiss = { showSettings = false }
+        ) { every, reward ->
+            onSaveSettings(every, reward)
+            showSettings = false
+        }
+    }
+}
+
+@Composable
+fun LoyaltySettingsDialog(
+    currentEvery: Int,
+    currentReward: String,
+    onDismiss: () -> Unit,
+    onSave: (Int, String) -> Unit
+) {
+    var every by remember { mutableStateOf(currentEvery.toString()) }
+    var reward by remember { mutableStateOf(currentReward) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Configurar fidelización") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = every,
+                    onValueChange = { every = it.filter(Char::isDigit).take(2) },
+                    label = { Text("Visitas para obtener premio") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = reward,
+                    onValueChange = { reward = it },
+                    label = { Text("Premio") },
+                    placeholder = { Text("Ej: Corte gratis") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave((every.toIntOrNull() ?: 10).coerceAtLeast(1), reward.trim()) },
+                colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)
+            ) { Text("Guardar") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
+    )
+}
+
+@Composable
+fun InventoryScreen(
+    products: List<ProductItem>,
+    onBack: () -> Unit,
+    onAdd: (ProductItem) -> Unit,
+    onAdjustStock: (ProductItem, Int) -> Unit,
+    onToggle: (ProductItem) -> Unit,
+    onSell: (ProductItem, Int, String) -> Unit
+) {
+    var showAdd by remember { mutableStateOf(false) }
+    var productToSell by remember { mutableStateOf<ProductItem?>(null) }
+    val lowStock = products.count { it.active && it.stock <= it.minStock }
+
+    Scaffold(
+        containerColor = Fondo,
+        topBar = { BackHeader("Inventario", onBack) },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showAdd = true }, containerColor = Dorado) {
+                Icon(Icons.Default.Add, null, tint = Color.Black)
+            }
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (lowStock > 0) {
+                item {
+                    Surface(color = Rojo.copy(alpha = 0.12f), shape = RoundedCornerShape(15.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.WarningAmber, null, tint = Rojo)
+                            Spacer(Modifier.width(10.dp))
+                            Column {
+                                Text("Stock bajo", color = Rojo, fontWeight = FontWeight.Bold)
+                                Text("$lowStock producto${if (lowStock == 1) "" else "s"} necesita${if (lowStock == 1) "" else "n"} reposición.", color = Gris, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (products.isEmpty()) item { EmptyCard("Agrega productos para comenzar a controlar stock.") }
+
+            items(products, key = { it.id }) { product ->
+                val isLow = product.stock <= product.minStock
+                Surface(color = Tarjeta, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(15.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Inventory2, null, tint = if (product.active) Dorado else Gris, modifier = Modifier.size(28.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(product.name, color = Color.White, fontWeight = FontWeight.Bold)
+                                Text("${money(product.price)} · Stock ${product.stock}", color = if (isLow) Rojo else Gris, fontSize = 12.sp)
+                                Text("Avisar al llegar a ${product.minStock}", color = Gris, fontSize = 11.sp)
+                            }
+                            Switch(checked = product.active, onCheckedChange = { onToggle(product) })
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(
+                                onClick = { onAdjustStock(product, -1) },
+                                enabled = product.stock > 0,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Remove, null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("Stock")
+                            }
+                            OutlinedButton(
+                                onClick = { onAdjustStock(product, 1) },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.Add, null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("Stock")
+                            }
+                            Button(
+                                onClick = { productToSell = product },
+                                enabled = product.active && product.stock > 0,
+                                colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.ShoppingCart, null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("Vender")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showAdd) {
+        NewProductDialog(
+            onDismiss = { showAdd = false },
+            onSave = {
+                onAdd(it)
+                showAdd = false
+            }
+        )
+    }
+
+    productToSell?.let { product ->
+        ProductSaleDialog(
+            product = product,
+            onDismiss = { productToSell = null },
+            onConfirm = { quantity, payment ->
+                onSell(product, quantity, payment)
+                productToSell = null
+            }
+        )
+    }
+}
+
+@Composable
+fun NewProductDialog(onDismiss: () -> Unit, onSave: (ProductItem) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    var price by remember { mutableStateOf("") }
+    var stock by remember { mutableStateOf("0") }
+    var minStock by remember { mutableStateOf("2") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nuevo producto") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("Producto") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                MoneyField("Precio de venta", price) { price = it }
+                OutlinedTextField(stock, { stock = it.filter(Char::isDigit) }, label = { Text("Stock inicial") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(minStock, { minStock = it.filter(Char::isDigit) }, label = { Text("Avisar cuando queden") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val value = price.toIntOrNull() ?: 0
+                    if (name.isNotBlank() && value > 0) {
+                        onSave(
+                            ProductItem(
+                                id = System.currentTimeMillis(),
+                                name = name.trim(),
+                                price = value,
+                                stock = stock.toIntOrNull() ?: 0,
+                                minStock = minStock.toIntOrNull() ?: 0,
+                                active = true
+                            )
+                        )
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)
+            ) { Text("Guardar") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
+    )
+}
+
+@Composable
+fun ProductSaleDialog(
+    product: ProductItem,
+    onDismiss: () -> Unit,
+    onConfirm: (Int, String) -> Unit
+) {
+    var quantity by remember { mutableStateOf("1") }
+    var payment by remember { mutableStateOf("Efectivo") }
+    val qty = (quantity.toIntOrNull() ?: 1).coerceAtLeast(1).coerceAtMost(product.stock.coerceAtLeast(1))
+    val total = product.price * qty
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Vender ${product.name}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Disponible: ${product.stock}", color = Gris)
+                OutlinedTextField(
+                    value = quantity,
+                    onValueChange = { quantity = it.filter(Char::isDigit).take(3) },
+                    label = { Text("Cantidad") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                SelectField("Pago", payment, listOf("Efectivo", "Transferencia", "Débito / Crédito")) { payment = it }
+                Text("Total: ${money(total)}", color = Dorado, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (product.stock > 0) onConfirm(qty, payment) },
+                enabled = product.stock > 0,
+                colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)
+            ) { Text("Confirmar venta") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
+    )
+}
+
+@Composable
+fun MoreScreen(
+    onBarbers: () -> Unit,
+    onServices: () -> Unit,
+    onCommissions: () -> Unit,
+    onLoyalty: () -> Unit,
+    onInventory: () -> Unit,
+    onQr: () -> Unit,
+    onSettings: () -> Unit,
+    onLogout: () -> Unit
+) {
     LazyColumn(modifier = Modifier.fillMaxSize().background(Fondo), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { SectionHeader("Más", "Administración de la barbería") }
         item { MoreCard(Icons.Default.ContentCut, "Barberos", "Equipo, estado y comisión", onBarbers) }
         item { MoreCard(Icons.Default.Storefront, "Servicios", "Precios, duración y comisión especial", onServices) }
         item { MoreCard(Icons.Default.Paid, "Comisiones", "Resumen por barbero", onCommissions) }
+        item { MoreCard(Icons.Default.Loyalty, "Fidelización", "Premios por visitas y clientes frecuentes", onLoyalty) }
+        item { MoreCard(Icons.Default.Inventory2, "Inventario", "Productos, stock bajo y ventas", onInventory) }
         item { MoreCard(Icons.Default.QrCode2, "QR Reservas", "QR real, enlace y flujo de cliente", onQr) }
         item { MoreCard(Icons.Default.Settings, "Configuración", "Datos de la barbería", onSettings) }
         item { MoreCard(Icons.Default.Logout, "Cerrar sesión", "Salir de esta cuenta", onLogout) }
@@ -1294,11 +1929,37 @@ object LocalStore {
     private const val SALES = "sales"
     private const val BLOCKS = "blocks"
     private const val CASH_CLOSES = "cash_closes"
+    private const val PRODUCTS = "products"
     private const val SHOP_NAME = "shop_name"
     private const val SHOP_PHONE = "shop_phone"
     private const val BOOKING_LINK = "booking_link"
+    private const val LOYALTY_EVERY = "loyalty_every"
+    private const val LOYALTY_REWARD = "loyalty_reward"
+    private const val CLOUD_TOKEN = "cloud_token"
+    private const val CLOUD_EMAIL = "cloud_email"
+    private const val CLOUD_USER = "cloud_user"
+    private const val CLOUD_BARBERIA_ID = "cloud_barberia_id"
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+
+    fun getCloudToken(context: Context): String = prefs(context).getString(CLOUD_TOKEN, "") ?: ""
+    fun getCloudEmail(context: Context): String = prefs(context).getString(CLOUD_EMAIL, "") ?: ""
+    fun saveCloudSession(context: Context, session: CloudSession) {
+        prefs(context).edit()
+            .putString(CLOUD_TOKEN, session.token)
+            .putString(CLOUD_EMAIL, session.userEmail)
+            .putString(CLOUD_USER, session.userName)
+            .putLong(CLOUD_BARBERIA_ID, session.barberiaId)
+            .apply()
+    }
+    fun clearCloudSession(context: Context) {
+        prefs(context).edit()
+            .remove(CLOUD_TOKEN)
+            .remove(CLOUD_EMAIL)
+            .remove(CLOUD_USER)
+            .remove(CLOUD_BARBERIA_ID)
+            .apply()
+    }
 
     fun getShopName(context: Context): String = prefs(context).getString(SHOP_NAME, "Barbería Central") ?: "Barbería Central"
     fun setShopName(context: Context, value: String) = prefs(context).edit().putString(SHOP_NAME, value).apply()
@@ -1306,6 +1967,10 @@ object LocalStore {
     fun setShopPhone(context: Context, value: String) = prefs(context).edit().putString(SHOP_PHONE, value).apply()
     fun getBookingLink(context: Context): String = prefs(context).getString(BOOKING_LINK, "https://barberia.negociospyme.cl/reservar") ?: "https://barberia.negociospyme.cl/reservar"
     fun setBookingLink(context: Context, value: String) = prefs(context).edit().putString(BOOKING_LINK, value).apply()
+    fun getLoyaltyEvery(context: Context): Int = prefs(context).getInt(LOYALTY_EVERY, 10).coerceAtLeast(1)
+    fun setLoyaltyEvery(context: Context, value: Int) = prefs(context).edit().putInt(LOYALTY_EVERY, value.coerceAtLeast(1)).apply()
+    fun getLoyaltyReward(context: Context): String = prefs(context).getString(LOYALTY_REWARD, "Corte gratis") ?: "Corte gratis"
+    fun setLoyaltyReward(context: Context, value: String) = prefs(context).edit().putString(LOYALTY_REWARD, value).apply()
 
     fun loadAppointments(context: Context): List<Appointment> {
         val raw = prefs(context).getString(APPOINTMENTS, null)
@@ -1325,11 +1990,11 @@ object LocalStore {
     fun loadClients(context: Context): List<ClientItem> {
         val raw = prefs(context).getString(CLIENTS, null)
         if (raw.isNullOrBlank()) return listOf(ClientItem(1, "Carlos González", "+56911111111", 8, 112000, "Cliente frecuente"), ClientItem(2, "Martín Pérez", "+56922222222", 5, 68000, ""))
-        return runCatching { val arr = JSONArray(raw); buildList { for (i in 0 until arr.length()) { val o = arr.getJSONObject(i); add(ClientItem(o.optLong("id"), o.optString("name"), o.optString("phone"), o.optInt("visits"), o.optInt("spent"), o.optString("notes"))) } } }.getOrDefault(emptyList())
+        return runCatching { val arr = JSONArray(raw); buildList { for (i in 0 until arr.length()) { val o = arr.getJSONObject(i); add(ClientItem(o.optLong("id"), o.optString("name"), o.optString("phone"), o.optInt("visits"), o.optInt("spent"), o.optString("notes"), o.optInt("rewardsRedeemed", 0))) } } }.getOrDefault(emptyList())
     }
 
     fun saveClients(context: Context, list: List<ClientItem>) {
-        val arr = JSONArray(); list.forEach { arr.put(JSONObject().apply { put("id", it.id); put("name", it.name); put("phone", it.phone); put("visits", it.visits); put("spent", it.spent); put("notes", it.notes) }) }; prefs(context).edit().putString(CLIENTS, arr.toString()).apply()
+        val arr = JSONArray(); list.forEach { arr.put(JSONObject().apply { put("id", it.id); put("name", it.name); put("phone", it.phone); put("visits", it.visits); put("spent", it.spent); put("notes", it.notes); put("rewardsRedeemed", it.rewardsRedeemed) }) }; prefs(context).edit().putString(CLIENTS, arr.toString()).apply()
     }
 
     fun loadBarbers(context: Context): List<BarberItem> {
@@ -1379,5 +2044,49 @@ object LocalStore {
 
     fun saveCashCloses(context: Context, list: List<CashClose>) {
         val arr = JSONArray(); list.forEach { arr.put(JSONObject().apply { put("id", it.id); put("date", it.date); put("time", it.time); put("total", it.total); put("cash", it.cash); put("transfer", it.transfer); put("card", it.card); put("note", it.note) }) }; prefs(context).edit().putString(CASH_CLOSES, arr.toString()).apply()
+    }
+
+    fun loadProducts(context: Context): List<ProductItem> {
+        val raw = prefs(context).getString(PRODUCTS, null)
+        if (raw.isNullOrBlank()) return listOf(
+            ProductItem(1, "Cera matte", 7000, 8, 3, true),
+            ProductItem(2, "Aceite para barba", 9000, 4, 2, true),
+            ProductItem(3, "Shampoo barber", 8500, 2, 2, true)
+        )
+        return runCatching {
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    add(
+                        ProductItem(
+                            id = o.optLong("id"),
+                            name = o.optString("name"),
+                            price = o.optInt("price"),
+                            stock = o.optInt("stock"),
+                            minStock = o.optInt("minStock", 0),
+                            active = o.optBoolean("active", true)
+                        )
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveProducts(context: Context, list: List<ProductItem>) {
+        val arr = JSONArray()
+        list.forEach {
+            arr.put(
+                JSONObject().apply {
+                    put("id", it.id)
+                    put("name", it.name)
+                    put("price", it.price)
+                    put("stock", it.stock)
+                    put("minStock", it.minStock)
+                    put("active", it.active)
+                }
+            )
+        }
+        prefs(context).edit().putString(PRODUCTS, arr.toString()).apply()
     }
 }
