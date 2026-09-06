@@ -1,17 +1,9 @@
 package cl.negociospyme.barberia
 
-import android.Manifest
-import android.app.AlarmManager
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -20,10 +12,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -36,2057 +28,445 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.MultiFormatWriter
-import org.json.JSONArray
-import org.json.JSONObject
-import java.text.NumberFormat
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
-import java.net.HttpURLConnection
-import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.max
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.text.NumberFormat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val Fondo = Color(0xFF101010)
 private val Tarjeta = Color(0xFF1A1A1A)
-private val Tarjeta2 = Color(0xFF222222)
-private val Dorado = Color(0xFFD4AF37)
-private val DoradoSuave = Color(0xFFFFE7A0)
+private val Dorado = Color(0xFFD9B735)
 private val Gris = Color(0xFFAAAAAA)
-private val Verde = Color(0xFF4CAF50)
-private val Rojo = Color(0xFFE85D5D)
-private val Azul = Color(0xFF5B8DEF)
+private val Verde = Color(0xFF55B85A)
+private val Rojo = Color(0xFFE66767)
+private const val BASE_URL = "https://appbarberia.negociospyme.cl"
 
-private const val DATE_PATTERN = "dd/MM/yyyy"
-private const val TIME_PATTERN = "HH:mm"
+data class Session(val token:String,val shopId:Long,val shopName:String,val slug:String,val userName:String,val email:String)
+data class Barber(val id:Long,val name:String,val phone:String,val commission:Double,val active:Boolean)
+data class Service(val id:Long,val name:String,val price:Double,val duration:Int,val commission:Double?,val active:Boolean)
+data class Client(val id:Long,val name:String,val phone:String,val visits:Int,val spent:Double,val points:Int)
+data class Product(val id:Long,val name:String,val price:Double,val stock:Int,val minStock:Int,val active:Boolean)
+data class Appointment(val id:Long,val client:String,val phone:String,val start:String,val status:String,val barberId:Long,val barber:String,val serviceId:Long,val service:String,val price:Double)
+data class Sale(val id:Long,val total:Double,val commission:Double,val payment:String,val created:String,val detail:String,val client:String,val barber:String)
+data class Dashboard(val appointments:Int,val sales:Double,val barbers:Int,val lowStock:Int,val plan:String,val status:String,val next:List<String>)
 
-data class Appointment(
-    val id: Long,
-    val client: String,
-    val phone: String,
-    val service: String,
-    val barber: String,
-    val date: String,
-    val time: String,
-    val status: String,
-    val price: Int,
-    val duration: Int = 30,
-    val source: String = "Manual"
-)
-
-data class ClientItem(
-    val id: Long,
-    val name: String,
-    val phone: String,
-    val visits: Int,
-    val spent: Int,
-    val notes: String,
-    val rewardsRedeemed: Int = 0
-)
-
-data class BarberItem(
-    val id: Long,
-    val name: String,
-    val commission: Int,
-    val active: Boolean
-)
-
-data class ServiceItem(
-    val id: Long,
-    val name: String,
-    val price: Int,
-    val duration: Int,
-    val active: Boolean,
-    val commissionOverride: Int = -1
-)
-
-data class SaleItem(
-    val id: Long,
-    val client: String,
-    val service: String,
-    val barber: String,
-    val amount: Int,
-    val payment: String,
-    val date: String,
-    val time: String = nowTime(),
-    val serviceBase: Int = 0,
-    val extra: Int = 0,
-    val discount: Int = 0,
-    val tip: Int = 0,
-    val commissionAmount: Int = 0
-)
-
-data class ScheduleBlock(
-    val id: Long,
-    val barber: String,
-    val date: String,
-    val start: String,
-    val end: String,
-    val reason: String
-)
-
-data class CashClose(
-    val id: Long,
-    val date: String,
-    val time: String,
-    val total: Int,
-    val cash: Int,
-    val transfer: Int,
-    val card: Int,
-    val note: String
-)
-
-data class ProductItem(
-    val id: Long,
-    val name: String,
-    val price: Int,
-    val stock: Int,
-    val minStock: Int,
-    val active: Boolean = true
-)
-
-data class ChargeDraft(
-    val payment: String,
-    val extra: Int,
-    val discount: Int,
-    val tip: Int
-)
-
-data class CloudSession(
-    val token: String,
-    val barberiaId: Long,
-    val barberiaName: String,
-    val userName: String,
-    val userEmail: String
-)
-
-object ApiClient {
-    private const val BASE_URL = "https://appbarberia.negociospyme.cl"
-
-    suspend fun login(email: String, password: String): Result<CloudSession> = withContext(Dispatchers.IO) {
-        runCatching {
-            val payload = JSONObject().apply {
-                put("email", email.trim())
-                put("password", password)
-            }
-            val response = postJson("/api/login.php", payload)
-            if (!response.optBoolean("ok", false)) {
-                throw IllegalStateException(response.optString("error", "No se pudo iniciar sesión"))
-            }
-            val user = response.getJSONObject("usuario")
-            val shop = response.getJSONObject("barberia")
-            CloudSession(
-                token = response.getString("token"),
-                barberiaId = shop.optLong("id"),
-                barberiaName = shop.optString("nombre", "Barbería"),
-                userName = user.optString("nombre", "Usuario"),
-                userEmail = user.optString("email", email.trim())
-            )
-        }
-    }
-
-    suspend fun validateSession(token: String): Boolean = withContext(Dispatchers.IO) {
-        runCatching {
-            val conn = (URL("$BASE_URL/api/me.php").openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 10000
-                readTimeout = 10000
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("Authorization", "Bearer $token")
-            }
-            val body = readResponse(conn)
-            JSONObject(body).optBoolean("ok", false)
-        }.getOrDefault(false)
-    }
-
-    private fun postJson(path: String, payload: JSONObject): JSONObject {
-        val conn = (URL(BASE_URL + path).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 12000
-            readTimeout = 12000
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            setRequestProperty("Accept", "application/json")
-        }
-        conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
-        val body = readResponse(conn)
-        return JSONObject(body)
-    }
-
-    private fun readResponse(conn: HttpURLConnection): String {
-        val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
-        return stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-            ?: "{\"ok\":false,\"error\":\"Respuesta vacía del servidor\"}"
-    }
-}
-
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
+class MainActivity: ComponentActivity(){
+    override fun onCreate(savedInstanceState: Bundle?){
         super.onCreate(savedInstanceState)
-        NotificationHelper.ensureChannel(this)
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
-        }
-        setContent {
-            MaterialTheme(
-                colorScheme = darkColorScheme(
-                    primary = Dorado,
-                    secondary = DoradoSuave,
-                    background = Fondo,
-                    surface = Tarjeta,
-                    onPrimary = Color.Black,
-                    onBackground = Color.White,
-                    onSurface = Color.White
-                )
-            ) {
-                BarberiaApp()
+        setContent{
+            MaterialTheme(colorScheme=darkColorScheme(primary=Dorado,background=Fondo,surface=Tarjeta,onPrimary=Color.Black)){
+                BarberiaCloudApp()
             }
         }
     }
 }
 
-class ReminderReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        val client = intent.getStringExtra("client") ?: "Cliente"
-        val time = intent.getStringExtra("time") ?: ""
-        val barber = intent.getStringExtra("barber") ?: ""
-        NotificationHelper.show(
-            context,
-            "Próxima cita",
-            "$client a las $time${if (barber.isNotBlank()) " · $barber" else ""}",
-            intent.getLongExtra("id", System.currentTimeMillis()).toInt()
-        )
+object Api {
+    private fun connection(path:String,method:String,token:String?=null):HttpURLConnection{
+        return (URL(BASE_URL+path).openConnection() as HttpURLConnection).apply{
+            requestMethod=method
+            connectTimeout=12000
+            readTimeout=12000
+            setRequestProperty("Accept","application/json")
+            if(token!=null) setRequestProperty("Authorization","Bearer $token")
+        }
+    }
+    private fun read(c:HttpURLConnection):JSONObject{
+        val stream=if(c.responseCode in 200..299)c.inputStream else c.errorStream
+        val body=stream?.bufferedReader(Charsets.UTF_8)?.use{it.readText()}?:"{}"
+        val j=JSONObject(body)
+        if(!j.optBoolean("ok",false)) throw IllegalStateException(j.optString("error","Error del servidor"))
+        return j
+    }
+    suspend fun get(path:String,token:String)=withContext(Dispatchers.IO){ read(connection(path,"GET",token)) }
+    suspend fun post(path:String,token:String?,data:JSONObject)=withContext(Dispatchers.IO){
+        val c=connection(path,"POST",token).apply{
+            doOutput=true
+            setRequestProperty("Content-Type","application/json; charset=utf-8")
+        }
+        c.outputStream.use{it.write(data.toString().toByteArray(Charsets.UTF_8))}
+        read(c)
+    }
+    suspend fun login(email:String,password:String):Session{
+        val j=post("/api/login.php",null,JSONObject().put("email",email).put("password",password))
+        val u=j.getJSONObject("usuario"); val b=j.getJSONObject("barberia")
+        return Session(j.getString("token"),b.getLong("id"),b.getString("nombre"),b.optString("slug"),u.getString("nombre"),u.getString("email"))
     }
 }
 
-object NotificationHelper {
-    private const val CHANNEL_ID = "barberia_citas"
-
-    fun ensureChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Citas y reservas", NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "Avisos de nuevas reservas y recordatorios de citas"
-                }
-            )
-        }
-    }
-
-    fun show(context: Context, title: String, text: String, id: Int) {
-        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        ensureChannel(context)
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .build()
-        manager.notify(id, notification)
-    }
-
-    fun newBooking(context: Context, appointment: Appointment) {
-        show(context, "Nueva reserva", "${appointment.client} · ${appointment.date} ${appointment.time}", appointment.id.toInt())
-    }
-
-    fun scheduleReminder(context: Context, appointment: Appointment) {
-        val whenMs = parseDateTime(appointment.date, appointment.time)?.time ?: return
-        val trigger = whenMs - 60 * 60 * 1000L
-        if (trigger <= System.currentTimeMillis()) return
-        val intent = Intent(context, ReminderReceiver::class.java).apply {
-            putExtra("id", appointment.id)
-            putExtra("client", appointment.client)
-            putExtra("time", appointment.time)
-            putExtra("barber", appointment.barber)
-        }
-        val pending = PendingIntent.getBroadcast(
-            context,
-            appointment.id.hashCode(),
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pending)
-    }
-
-    fun cancelReminder(context: Context, appointmentId: Long) {
-        val pending = PendingIntent.getBroadcast(
-            context,
-            appointmentId.hashCode(),
-            Intent(context, ReminderReceiver::class.java),
-            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
-        ) ?: return
-        val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarm.cancel(pending)
-        pending.cancel()
-    }
-}
+fun money(v:Double)=NumberFormat.getCurrencyInstance(Locale("es","CL")).format(v)
+fun today():String=SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).format(Date())
+fun monthStart():String=SimpleDateFormat("yyyy-MM-01",Locale.getDefault()).format(Date())
+fun JSONObject.str(k:String)=optString(k,"")
+fun JSONObject.long(k:String)=optLong(k,0L)
+fun JSONObject.dbl(k:String)=optDouble(k,0.0)
+fun JSONObject.int(k:String)=optInt(k,0)
+fun JSONObject.bool(k:String)=optInt(k,1)==1 || optBoolean(k,false)
 
 @Composable
-fun BarberiaApp() {
-    val context = LocalContext.current
-
-    val savedCloudToken = remember(context) { LocalStore.getCloudToken(context) }
-    var loggedIn by remember { mutableStateOf(false) }
-    var checkingSession by remember { mutableStateOf(savedCloudToken.isNotBlank()) }
-    var screen by remember { mutableStateOf("inicio") }
-    var shopName by remember { mutableStateOf(LocalStore.getShopName(context)) }
-    var shopPhone by remember { mutableStateOf(LocalStore.getShopPhone(context)) }
-    var bookingLink by remember { mutableStateOf(LocalStore.getBookingLink(context)) }
-    var loyaltyEvery by remember { mutableStateOf(LocalStore.getLoyaltyEvery(context)) }
-    var loyaltyReward by remember { mutableStateOf(LocalStore.getLoyaltyReward(context)) }
-
-    val appointments = remember(context) { mutableStateListOf<Appointment>().also { it.addAll(LocalStore.loadAppointments(context)) } }
-    val clients = remember(context) { mutableStateListOf<ClientItem>().also { it.addAll(LocalStore.loadClients(context)) } }
-    val barbers = remember(context) { mutableStateListOf<BarberItem>().also { it.addAll(LocalStore.loadBarbers(context)) } }
-    val services = remember(context) { mutableStateListOf<ServiceItem>().also { it.addAll(LocalStore.loadServices(context)) } }
-    val sales = remember(context) { mutableStateListOf<SaleItem>().also { it.addAll(LocalStore.loadSales(context)) } }
-    val blocks = remember(context) { mutableStateListOf<ScheduleBlock>().also { it.addAll(LocalStore.loadBlocks(context)) } }
-    val cashCloses = remember(context) { mutableStateListOf<CashClose>().also { it.addAll(LocalStore.loadCashCloses(context)) } }
-    val products = remember(context) { mutableStateListOf<ProductItem>().also { it.addAll(LocalStore.loadProducts(context)) } }
-
-    LaunchedEffect(savedCloudToken) {
-        if (savedCloudToken.isNotBlank()) {
-            val valid = ApiClient.validateSession(savedCloudToken)
-            if (valid) {
-                loggedIn = true
-            } else {
-                LocalStore.clearCloudSession(context)
-            }
-        }
-        checkingSession = false
-    }
-
-    if (checkingSession) {
-        Box(Modifier.fillMaxSize().background(Fondo), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = Dorado)
-                Spacer(Modifier.height(12.dp))
-                Text("Conectando con NegociosPyme Cloud...", color = Gris)
-            }
-        }
-        return
-    }
-
-    fun persistAppointment(appointment: Appointment, isNew: Boolean) {
-        if (isNew) {
-            appointments.add(appointment)
-            NotificationHelper.newBooking(context, appointment)
-        } else {
-            val idx = appointments.indexOfFirst { it.id == appointment.id }
-            if (idx >= 0) appointments[idx] = appointment
-        }
-        LocalStore.saveAppointments(context, appointments)
-        NotificationHelper.cancelReminder(context, appointment.id)
-        if (appointment.status != "Cancelada" && appointment.status != "Atendida") NotificationHelper.scheduleReminder(context, appointment)
-        if (appointment.client.isNotBlank() && clients.none { appointment.phone.isNotBlank() && it.phone == appointment.phone }) {
-            clients.add(ClientItem(System.currentTimeMillis(), appointment.client, appointment.phone, 0, 0, ""))
-            LocalStore.saveClients(context, clients)
-        }
-    }
-
-    if (!loggedIn) {
-        LoginScreen(
-            shopName = shopName,
-            savedEmail = LocalStore.getCloudEmail(context),
-            onLogin = { email, password ->
-                val result = ApiClient.login(email, password)
-                result.onSuccess { session ->
-                    LocalStore.saveCloudSession(context, session)
-                    shopName = session.barberiaName
-                    LocalStore.setShopName(context, session.barberiaName)
-                    loggedIn = true
-                }
-                result
+fun BarberiaCloudApp(){
+    val ctx=LocalContext.current
+    val prefs=remember{ctx.getSharedPreferences("barberia_cloud",Context.MODE_PRIVATE)}
+    var session by remember{
+        mutableStateOf(
+            prefs.getString("token",null)?.let{
+                Session(it,prefs.getLong("shopId",0),prefs.getString("shopName","Barbería")!!,prefs.getString("slug","")!!,prefs.getString("userName","Usuario")!!,prefs.getString("email","")!!)
             }
         )
-        return
     }
-
-    when (screen) {
-        "inicio", "agenda", "caja", "clientes", "mas" -> {
-            Scaffold(
-                containerColor = Fondo,
-                bottomBar = {
-                    NavigationBar(containerColor = Tarjeta) {
-                        BottomItem("inicio", "Inicio", Icons.Default.Home, screen) { screen = "inicio" }
-                        BottomItem("agenda", "Agenda", Icons.Default.CalendarMonth, screen) { screen = "agenda" }
-                        BottomItem("caja", "Caja", Icons.Default.PointOfSale, screen) { screen = "caja" }
-                        BottomItem("clientes", "Clientes", Icons.Default.People, screen) { screen = "clientes" }
-                        BottomItem("mas", "Más", Icons.Default.MoreHoriz, screen) { screen = "mas" }
-                    }
-                }
-            ) { padding ->
-                Box(Modifier.padding(padding)) {
-                    when (screen) {
-                        "inicio" -> DashboardScreen(shopName, appointments, barbers, sales, { screen = "agenda" }, { screen = "caja" })
-
-                        "agenda" -> AgendaScreen(
-                            appointments = appointments,
-                            clients = clients,
-                            services = services,
-                            barbers = barbers,
-                            blocks = blocks,
-                            onAdd = { persistAppointment(it, true) },
-                            onUpdate = { persistAppointment(it, false) },
-                            onCancel = { appt ->
-                                val updated = appt.copy(status = "Cancelada")
-                                persistAppointment(updated, false)
-                                NotificationHelper.cancelReminder(context, appt.id)
-                            },
-                            onConfirm = { appt -> persistAppointment(appt.copy(status = "Confirmada"), false) },
-                            onAddBlock = {
-                                blocks.add(it)
-                                LocalStore.saveBlocks(context, blocks)
-                            },
-                            onDeleteBlock = {
-                                blocks.removeAll { b -> b.id == it.id }
-                                LocalStore.saveBlocks(context, blocks)
-                            },
-                            onCharge = { appt, draft ->
-                                val service = services.firstOrNull { it.name == appt.service }
-                                val barber = barbers.firstOrNull { it.name == appt.barber }
-                                val baseAfterDiscount = max(0, appt.price - draft.discount)
-                                val total = max(0, appt.price + draft.extra - draft.discount) + draft.tip
-                                val commission = commissionAmount(baseAfterDiscount, service, barber)
-                                val sale = SaleItem(
-                                    id = System.currentTimeMillis(),
-                                    client = appt.client,
-                                    service = appt.service,
-                                    barber = appt.barber,
-                                    amount = total,
-                                    payment = draft.payment,
-                                    date = today(),
-                                    time = nowTime(),
-                                    serviceBase = appt.price,
-                                    extra = draft.extra,
-                                    discount = draft.discount,
-                                    tip = draft.tip,
-                                    commissionAmount = commission
-                                )
-                                sales.add(0, sale)
-                                LocalStore.saveSales(context, sales)
-                                persistAppointment(appt.copy(status = "Atendida"), false)
-                                NotificationHelper.cancelReminder(context, appt.id)
-
-                                val clientIndex = clients.indexOfFirst { (appt.phone.isNotBlank() && it.phone == appt.phone) || it.name.equals(appt.client, true) }
-                                if (clientIndex >= 0) {
-                                    val old = clients[clientIndex]
-                                    clients[clientIndex] = old.copy(visits = old.visits + 1, spent = old.spent + total)
-                                } else {
-                                    clients.add(ClientItem(System.currentTimeMillis(), appt.client, appt.phone, 1, total, ""))
-                                }
-                                LocalStore.saveClients(context, clients)
-                            },
-                            onWhatsAppReminder = { openWhatsAppReminder(context, it, shopName) }
-                        )
-
-                        "caja" -> CajaScreen(
-                            sales = sales,
-                            clients = clients,
-                            services = services,
-                            barbers = barbers,
-                            cashCloses = cashCloses,
-                            onAddSale = { sale ->
-                                sales.add(0, sale)
-                                LocalStore.saveSales(context, sales)
-
-                                val saleClient = sale.client.trim()
-                                if (saleClient.isNotBlank() && !saleClient.equals("Venta directa", true)) {
-                                    val clientIndex = clients.indexOfFirst { it.name.equals(saleClient, true) }
-                                    if (clientIndex >= 0) {
-                                        val oldClient = clients[clientIndex]
-                                        clients[clientIndex] = oldClient.copy(
-                                            visits = oldClient.visits + 1,
-                                            spent = oldClient.spent + sale.amount
-                                        )
-                                    } else {
-                                        clients.add(ClientItem(System.currentTimeMillis(), saleClient, "", 1, sale.amount, ""))
-                                    }
-                                    LocalStore.saveClients(context, clients)
-                                }
-                            },
-                            onCloseCash = {
-                                cashCloses.add(0, it)
-                                LocalStore.saveCashCloses(context, cashCloses)
-                            }
-                        )
-
-                        "clientes" -> ClientsScreen(clients) {
-                            clients.add(it)
-                            LocalStore.saveClients(context, clients)
-                        }
-
-                        "mas" -> MoreScreen(
-                            onBarbers = { screen = "barberos" },
-                            onServices = { screen = "servicios" },
-                            onCommissions = { screen = "comisiones" },
-                            onLoyalty = { screen = "fidelizacion" },
-                            onInventory = { screen = "inventario" },
-                            onQr = { screen = "qr" },
-                            onSettings = { screen = "config" },
-                            onLogout = {
-                                LocalStore.clearCloudSession(context)
-                                loggedIn = false
-                            }
-                        )
-                    }
-                }
-            }
+    if(session==null){
+        LoginScreen{ s->
+            prefs.edit().putString("token",s.token).putLong("shopId",s.shopId).putString("shopName",s.shopName).putString("slug",s.slug)
+                .putString("userName",s.userName).putString("email",s.email).apply()
+            session=s
         }
-
-        "barberos" -> BarbersScreen(barbers, { screen = "mas" }, {
-            barbers.add(it); LocalStore.saveBarbers(context, barbers)
-        }, { barber ->
-            val index = barbers.indexOfFirst { it.id == barber.id }
-            if (index >= 0) { barbers[index] = barber.copy(active = !barber.active); LocalStore.saveBarbers(context, barbers) }
-        })
-
-        "servicios" -> ServicesScreen(services, { screen = "mas" }, {
-            services.add(it); LocalStore.saveServices(context, services)
-        }, { service ->
-            val index = services.indexOfFirst { it.id == service.id }
-            if (index >= 0) { services[index] = service.copy(active = !service.active); LocalStore.saveServices(context, services) }
-        })
-
-        "comisiones" -> CommissionsScreen(sales, barbers, services, { screen = "mas" })
-
-        "fidelizacion" -> LoyaltyScreen(
-            clients = clients,
-            rewardEvery = loyaltyEvery,
-            rewardText = loyaltyReward,
-            onBack = { screen = "mas" },
-            onRedeem = { client ->
-                val index = clients.indexOfFirst { it.id == client.id }
-                if (index >= 0) {
-                    clients[index] = clients[index].copy(rewardsRedeemed = clients[index].rewardsRedeemed + 1)
-                    LocalStore.saveClients(context, clients)
-                }
-            },
-            onSaveSettings = { every, reward ->
-                loyaltyEvery = every.coerceAtLeast(1)
-                loyaltyReward = reward.ifBlank { "Corte gratis" }
-                LocalStore.setLoyaltyEvery(context, loyaltyEvery)
-                LocalStore.setLoyaltyReward(context, loyaltyReward)
-            }
-        )
-
-        "inventario" -> InventoryScreen(
-            products = products,
-            onBack = { screen = "mas" },
-            onAdd = { product ->
-                products.add(product)
-                LocalStore.saveProducts(context, products)
-            },
-            onAdjustStock = { product, delta ->
-                val index = products.indexOfFirst { it.id == product.id }
-                if (index >= 0) {
-                    products[index] = products[index].copy(stock = max(0, products[index].stock + delta))
-                    LocalStore.saveProducts(context, products)
-                }
-            },
-            onToggle = { product ->
-                val index = products.indexOfFirst { it.id == product.id }
-                if (index >= 0) {
-                    products[index] = products[index].copy(active = !products[index].active)
-                    LocalStore.saveProducts(context, products)
-                }
-            },
-            onSell = { product, quantity, payment ->
-                val index = products.indexOfFirst { it.id == product.id }
-                if (index >= 0 && quantity > 0 && products[index].stock >= quantity) {
-                    val total = product.price * quantity
-                    products[index] = products[index].copy(stock = products[index].stock - quantity)
-                    LocalStore.saveProducts(context, products)
-                    sales.add(
-                        0,
-                        SaleItem(
-                            id = System.currentTimeMillis(),
-                            client = "Venta directa",
-                            service = "Producto: ${product.name} x$quantity",
-                            barber = "Tienda",
-                            amount = total,
-                            payment = payment,
-                            date = today(),
-                            time = nowTime(),
-                            serviceBase = 0,
-                            extra = total,
-                            discount = 0,
-                            tip = 0,
-                            commissionAmount = 0
-                        )
-                    )
-                    LocalStore.saveSales(context, sales)
-                }
-            }
-        )
-
-        "qr" -> QrScreen(
-            shopName = shopName,
-            bookingLink = bookingLink,
-            services = services.filter { it.active },
-            barbers = barbers.filter { it.active },
-            appointments = appointments,
-            blocks = blocks,
-            onBack = { screen = "mas" },
-            onSaveLink = {
-                bookingLink = it
-                LocalStore.setBookingLink(context, it)
-            },
-            onOnlineBooking = { persistAppointment(it.copy(source = "Online"), true) }
-        )
-
-        "config" -> SettingsScreen(shopName, shopPhone, { screen = "mas" }) { name, phone ->
-            shopName = name; shopPhone = phone
-            LocalStore.setShopName(context, name); LocalStore.setShopPhone(context, phone)
+    }else{
+        CloudShell(session!!){
+            prefs.edit().clear().apply(); session=null
         }
     }
 }
 
 @Composable
-private fun RowScope.BottomItem(route: String, label: String, icon: ImageVector, current: String, onClick: () -> Unit) {
-    NavigationBarItem(
-        selected = current == route,
-        onClick = onClick,
-        icon = { Icon(icon, contentDescription = null) },
-        label = { Text(label, fontSize = 11.sp) },
-        colors = NavigationBarItemDefaults.colors(
-            selectedIconColor = Color.Black,
-            selectedTextColor = Dorado,
-            indicatorColor = Dorado,
-            unselectedIconColor = Gris,
-            unselectedTextColor = Gris
-        )
-    )
+fun LoginScreen(onLogin:(Session)->Unit){
+    var email by remember{mutableStateOf("")}; var pass by remember{mutableStateOf("")}; var loading by remember{mutableStateOf(false)}
+    var error by remember{mutableStateOf("")}; val scope=rememberCoroutineScope()
+    Column(Modifier.fillMaxSize().background(Fondo).padding(28.dp),verticalArrangement=Arrangement.Center){
+        Icon(Icons.Default.ContentCut,null,tint=Dorado,modifier=Modifier.size(70.dp))
+        Spacer(Modifier.height(18.dp)); Text("BARBERÍA",fontSize=38.sp,fontWeight=FontWeight.Black,color=Dorado)
+        Text("NegociosPyme Cloud",color=Gris,fontSize=18.sp); Spacer(Modifier.height(28.dp))
+        OutlinedTextField(email,{email=it},label={Text("Correo")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(pass,{pass=it},label={Text("Contraseña")},modifier=Modifier.fillMaxWidth(),singleLine=true,visualTransformation=PasswordVisualTransformation())
+        if(error.isNotBlank()){Spacer(Modifier.height(10.dp));Text(error,color=Rojo)}
+        Spacer(Modifier.height(18.dp))
+        Button(onClick={
+            loading=true;error=""
+            scope.launch{
+                runCatching{Api.login(email.trim(),pass)}.onSuccess{onLogin(it)}.onFailure{error=it.message?:"Error";loading=false}
+            }
+        },modifier=Modifier.fillMaxWidth().height(54.dp),enabled=!loading){
+            if(loading) CircularProgressIndicator(Modifier.size(22.dp),strokeWidth=2.dp) else Text("INGRESAR",fontWeight=FontWeight.Bold)
+        }
+    }
+}
+
+data class NavItem(val key:String,val title:String,val icon:ImageVector)
+private val navItems=listOf(
+    NavItem("inicio","Inicio",Icons.Default.Home),
+    NavItem("agenda","Agenda",Icons.Default.CalendarMonth),
+    NavItem("caja","Caja",Icons.Default.PointOfSale),
+    NavItem("clientes","Clientes",Icons.Default.People),
+    NavItem("mas","Más",Icons.Default.Menu)
+)
+
+@Composable
+fun CloudShell(s:Session,onLogout:()->Unit){
+    var screen by remember{mutableStateOf("inicio")}
+    Scaffold(
+        bottomBar={
+            NavigationBar(containerColor=Color(0xFF161616)){
+                navItems.forEach{n->
+                    NavigationBarItem(selected=screen==n.key,onClick={screen=n.key},icon={Icon(n.icon,null)},label={Text(n.title)})
+                }
+            }
+        },
+        containerColor=Fondo
+    ){pad->
+        Box(Modifier.padding(pad)){
+            when(screen){
+                "inicio"->HomeScreen(s,{screen=it},onLogout)
+                "agenda"->AgendaScreen(s)
+                "caja"->CashScreen(s)
+                "clientes"->ClientsScreen(s)
+                else->MoreScreen(s,{screen=it},onLogout)
+            }
+            when(screen){
+                "barberos"->BarbersScreen(s){screen="mas"}
+                "servicios"->ServicesScreen(s){screen="mas"}
+                "inventario"->ProductsScreen(s){screen="mas"}
+                "reportes"->ReportsScreen(s){screen="mas"}
+                "qr"->QrScreen(s){screen="mas"}
+            }
+        }
+    }
 }
 
 @Composable
-fun LoginScreen(
-    shopName: String,
-    savedEmail: String,
-    onLogin: suspend (String, String) -> Result<CloudSession>
-) {
-    var email by remember { mutableStateOf(savedEmail) }
-    var password by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
-
-    Column(
-        modifier = Modifier.fillMaxSize().background(Fondo).padding(24.dp),
-        verticalArrangement = Arrangement.Center
-    ) {
-        Surface(color = Dorado, shape = RoundedCornerShape(20.dp)) {
-            Icon(Icons.Default.ContentCut, null, tint = Color.Black, modifier = Modifier.padding(16.dp).size(38.dp))
+fun HomeScreen(s:Session,navigate:(String)->Unit,onLogout:()->Unit){
+    var data by remember{mutableStateOf<Dashboard?>(null)}; var error by remember{mutableStateOf("")}; val scope=rememberCoroutineScope()
+    fun load(){scope.launch{runCatching{
+        val j=Api.get("/api/dashboard.php",s.token); val x=j.getJSONObject("summary"); val b=j.getJSONObject("barberia"); val a=j.getJSONArray("proximas")
+        Dashboard(x.int("citas_hoy"),x.dbl("ventas_hoy"),x.int("barberos_activos"),x.int("stock_bajo"),b.str("plan"),b.str("estado"),
+            List(a.length()){i->val o=a.getJSONObject(i);"${o.str("inicio").takeLast(8).take(5)} · ${o.str("cliente_nombre")} · ${o.str("servicio")}"})
+    }.onSuccess{data=it;error=""}.onFailure{error=it.message?:"Error"}}}
+    LaunchedEffect(Unit){load()}
+    LazyColumn(Modifier.fillMaxSize().background(Fondo),contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
+        item{
+            Row(verticalAlignment=Alignment.CenterVertically){
+                Column(Modifier.weight(1f)){Text(s.shopName,fontSize=26.sp,fontWeight=FontWeight.Bold);Text("Conectado a NegociosPyme Cloud",color=Verde)}
+                IconButton(onClick={load()}){Icon(Icons.Default.Refresh,null,tint=Dorado)}
+            }
         }
-        Spacer(Modifier.height(20.dp))
-        Text("BARBERÍA", color = Dorado, fontSize = 34.sp, fontWeight = FontWeight.Black)
-        Text(shopName, color = Color.White, fontSize = 18.sp)
+        if(error.isNotBlank()) item{ErrorBox(error)}
+        data?.let{d->
+            item{
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    Stat("${d.appointments}","Citas hoy",Modifier.weight(1f));Stat(money(d.sales),"Ventas",Modifier.weight(1f));Stat("${d.lowStock}","Stock bajo",Modifier.weight(1f))
+                }
+            }
+            item{Text("Plan ${d.plan} · ${d.status}",color=Gris)}
+            item{SectionTitle("Próximas citas")}
+            if(d.next.isEmpty()) item{Text("Sin próximas citas",color=Gris)} else items(d.next){CardLine(it)}
+        }
+        item{SectionTitle("Gestión rápida")}
+        item{MenuCard("Barberos","Equipo y comisiones",Icons.Default.ContentCut){navigate("barberos")}}
+        item{MenuCard("Servicios","Precios, duración y comisión",Icons.Default.Build){navigate("servicios")}}
+        item{MenuCard("Inventario","Productos y stock",Icons.Default.Inventory2){navigate("inventario")}}
+        item{MenuCard("Reportes","Ventas y comisiones",Icons.Default.BarChart){navigate("reportes")}}
+        item{MenuCard("QR reservas","Link público para clientes",Icons.Default.QrCode2){navigate("qr")}}
+        item{OutlinedButton(onClick=onLogout,modifier=Modifier.fillMaxWidth()){Text("Cerrar sesión")}}
+    }
+}
+
+@Composable fun Stat(v:String,l:String,m:Modifier){Surface(m,shape=RoundedCornerShape(14.dp),color=Tarjeta){Column(Modifier.padding(12.dp)){Text(v,color=Dorado,fontWeight=FontWeight.Bold,fontSize=18.sp);Text(l,color=Gris,fontSize=12.sp)}}}
+@Composable fun SectionTitle(t:String){Text(t,fontWeight=FontWeight.Bold,fontSize=19.sp)}
+@Composable fun ErrorBox(t:String){Surface(color=Color(0xFF4B2020),shape=RoundedCornerShape(12.dp)){Text(t,color=Color(0xFFFFB2B2),modifier=Modifier.padding(12.dp))}}
+@Composable fun CardLine(t:String){Surface(color=Tarjeta,shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth()){Text(t,modifier=Modifier.padding(14.dp))}}
+@Composable fun MenuCard(t:String,sub:String,ic:ImageVector,onClick:()->Unit){Surface(color=Tarjeta,shape=RoundedCornerShape(14.dp),modifier=Modifier.fillMaxWidth().clickable{onClick()}){Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(ic,null,tint=Dorado);Spacer(Modifier.width(14.dp));Column(Modifier.weight(1f)){Text(t,fontWeight=FontWeight.Bold);Text(sub,color=Gris,fontSize=13.sp)};Icon(Icons.Default.ChevronRight,null,tint=Gris)}}}
+
+@Composable
+fun AgendaScreen(s:Session){
+    var date by remember{mutableStateOf(today())}; var list by remember{mutableStateOf<List<Appointment>>(emptyList())}
+    var barbers by remember{mutableStateOf<List<Barber>>(emptyList())}; var services by remember{mutableStateOf<List<Service>>(emptyList())}
+    var show by remember{mutableStateOf(false)}; var error by remember{mutableStateOf("")}; val scope=rememberCoroutineScope()
+    fun load(){scope.launch{runCatching{
+        val a=Api.get("/api/appointments.php?from=$date&to=$date",s.token).getJSONArray("items")
+        val bs=Api.get("/api/barbers.php",s.token).getJSONArray("items")
+        val ss=Api.get("/api/services.php",s.token).getJSONArray("items")
+        Triple(List(a.length()){i->val o=a.getJSONObject(i);Appointment(o.long("id"),o.str("cliente_nombre"),o.str("cliente_telefono"),o.str("inicio"),o.str("estado"),o.long("barbero_id"),o.str("barbero"),o.long("servicio_id"),o.str("servicio"),o.dbl("precio"))},
+            List(bs.length()){i->val o=bs.getJSONObject(i);Barber(o.long("id"),o.str("nombre"),o.str("telefono"),o.dbl("comision_pct"),o.bool("activo"))},
+            List(ss.length()){i->val o=ss.getJSONObject(i);Service(o.long("id"),o.str("nombre"),o.dbl("precio"),o.int("duracion_min"),if(o.isNull("comision_pct"))null else o.dbl("comision_pct"),o.bool("activo"))})
+    }.onSuccess{list=it.first;barbers=it.second.filter{x->x.active};services=it.third.filter{x->x.active};error=""}.onFailure{error=it.message?:"Error"}}}
+    LaunchedEffect(date){load()}
+    Column(Modifier.fillMaxSize().background(Fondo).padding(16.dp)){
+        Row(verticalAlignment=Alignment.CenterVertically){Text("Agenda",fontSize=26.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));IconButton(onClick={load()}){Icon(Icons.Default.Refresh,null)}}
+        OutlinedTextField(date,{date=it},label={Text("Fecha yyyy-MM-dd")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+        if(error.isNotBlank()) ErrorBox(error)
         Spacer(Modifier.height(8.dp))
-        Text("Cuenta conectada a NegociosPyme Cloud", color = Verde, fontSize = 12.sp)
-        Spacer(Modifier.height(24.dp))
+        Button(onClick={show=true},modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.Add,null);Spacer(Modifier.width(6.dp));Text("Nueva cita")}
+        Spacer(Modifier.height(10.dp))
+        LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
+            items(list){a->
+                Surface(color=Tarjeta,shape=RoundedCornerShape(13.dp),modifier=Modifier.fillMaxWidth()){
+                    Column(Modifier.padding(14.dp)){
+                        Text("${a.start.takeLast(8).take(5)} · ${a.client}",fontWeight=FontWeight.Bold)
+                        Text("${a.service} · ${a.barber} · ${money(a.price)}",color=Gris)
+                        Text(a.status,color=if(a.status=="cancelada")Rojo else Verde)
+                        Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
+                            if(a.status!="confirmada"&&a.status!="atendida"&&a.status!="cancelada") SmallAction("Confirmar"){scope.launch{runCatching{Api.post("/api/appointments.php",s.token,JSONObject().put("action","status").put("id",a.id).put("estado","confirmada"))}.onSuccess{load()}}}
+                            if(a.status!="atendida"&&a.status!="cancelada") SmallAction("Atendida"){scope.launch{runCatching{Api.post("/api/appointments.php",s.token,JSONObject().put("action","status").put("id",a.id).put("estado","atendida"))}.onSuccess{load()}}}
+                            if(a.status!="cancelada"&&a.status!="atendida") SmallAction("Cancelar"){scope.launch{runCatching{Api.post("/api/appointments.php",s.token,JSONObject().put("action","status").put("id",a.id).put("estado","cancelada"))}.onSuccess{load()}}}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if(show) AppointmentDialog(date,barbers,services,onDismiss={show=false}){name,phone,bid,sid,d,t->
+        scope.launch{runCatching{Api.post("/api/appointments.php",s.token,JSONObject().put("action","save").put("cliente_nombre",name).put("cliente_telefono",phone).put("barbero_id",bid).put("servicio_id",sid).put("inicio","$d $t:00"))}
+            .onSuccess{show=false;date=d;load()}.onFailure{error=it.message?:"Error"}}
+    }
+}
 
-        OutlinedTextField(
-            value = email,
-            onValueChange = { email = it; error = "" },
-            label = { Text("Correo") },
-            leadingIcon = { Icon(Icons.Default.Email, null) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth()
+@Composable fun SmallAction(t:String,onClick:()->Unit){TextButton(onClick=onClick,contentPadding=PaddingValues(horizontal=7.dp)){Text(t,fontSize=12.sp)}}
+
+@Composable
+fun AppointmentDialog(defaultDate:String,barbers:List<Barber>,services:List<Service>,onDismiss:()->Unit,onSave:(String,String,Long,Long,String,String)->Unit){
+    var name by remember{mutableStateOf("")};var phone by remember{mutableStateOf("")};var date by remember{mutableStateOf(defaultDate)};var time by remember{mutableStateOf("10:00")}
+    var barber by remember{mutableStateOf(barbers.firstOrNull())};var service by remember{mutableStateOf(services.firstOrNull())}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("Nueva cita")},text={
+        Column(Modifier.verticalScroll(rememberScrollState())){
+            OutlinedTextField(name,{name=it},label={Text("Cliente")},modifier=Modifier.fillMaxWidth())
+            OutlinedTextField(phone,{phone=it},label={Text("Teléfono")},modifier=Modifier.fillMaxWidth())
+            Picker("Barbero",barber?.name?:"Seleccionar",barbers.map{it.name}){n->barber=barbers.firstOrNull{it.name==n}}
+            Picker("Servicio",service?.name?:"Seleccionar",services.map{"${it.name} · ${money(it.price)}"}){n->service=services.firstOrNull{n.startsWith(it.name)}}
+            OutlinedTextField(date,{date=it},label={Text("Fecha yyyy-MM-dd")},modifier=Modifier.fillMaxWidth())
+            OutlinedTextField(time,{time=it},label={Text("Hora HH:mm")},modifier=Modifier.fillMaxWidth())
+        }
+    },confirmButton={Button(onClick={if(name.isNotBlank()&&barber!=null&&service!=null)onSave(name,phone,barber!!.id,service!!.id,date,time)}){Text("Guardar")}},dismissButton={TextButton(onClick=onDismiss){Text("Cancelar")}})
+}
+
+@Composable
+fun Picker(label:String,current:String,options:List<String>,onPick:(String)->Unit){
+    var open by remember{mutableStateOf(false)}
+    Column{Text(label,color=Gris,fontSize=12.sp);Box{OutlinedButton(onClick={open=true},modifier=Modifier.fillMaxWidth()){Text(current,modifier=Modifier.weight(1f));Icon(Icons.Default.ArrowDropDown,null)}
+        DropdownMenu(open,{open=false}){options.forEach{o->DropdownMenuItem(text={Text(o)},onClick={onPick(o);open=false})}}}}
+}
+
+@Composable
+fun BarbersScreen(s:Session,onBack:()->Unit){
+    var list by remember{mutableStateOf<List<Barber>>(emptyList())};var edit by remember{mutableStateOf<Barber?>(null)};var create by remember{mutableStateOf(false)};var err by remember{mutableStateOf("")};val scope=rememberCoroutineScope()
+    fun load(){scope.launch{runCatching{val a=Api.get("/api/barbers.php",s.token).getJSONArray("items");List(a.length()){i->val o=a.getJSONObject(i);Barber(o.long("id"),o.str("nombre"),o.str("telefono"),o.dbl("comision_pct"),o.bool("activo"))}}.onSuccess{list=it}.onFailure{err=it.message?:"Error"}}}
+    LaunchedEffect(Unit){load()}
+    ManagedList("Barberos",onBack,{create=true},err){list.forEach{b->item{Surface(color=Tarjeta,shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth().clickable{edit=b}){Column(Modifier.padding(14.dp)){Text(b.name,fontWeight=FontWeight.Bold);Text("${b.commission}% comisión · ${if(b.active)"Activo" else "Inactivo"}",color=Gris)}}}}}
+    if(create||edit!=null) BarberDialog(edit,{create=false;edit=null}){name,phone,comm,active->
+        scope.launch{runCatching{Api.post("/api/barbers.php",s.token,JSONObject().put("action","save").put("id",edit?.id?:0).put("nombre",name).put("telefono",phone).put("comision_pct",comm).put("activo",if(active)1 else 0))}
+            .onSuccess{create=false;edit=null;load()}.onFailure{err=it.message?:"Error"}}
+    }
+}
+
+@Composable fun BarberDialog(b:Barber?,dismiss:()->Unit,save:(String,String,Double,Boolean)->Unit){
+    var name by remember{mutableStateOf(b?.name?:"")};var phone by remember{mutableStateOf(b?.phone?:"")};var comm by remember{mutableStateOf((b?.commission?:40.0).toString())};var active by remember{mutableStateOf(b?.active?:true)}
+    AlertDialog(onDismissRequest=dismiss,title={Text(if(b==null)"Nuevo barbero" else "Editar barbero")},text={Column{OutlinedTextField(name,{name=it},label={Text("Nombre")});OutlinedTextField(phone,{phone=it},label={Text("Teléfono")});OutlinedTextField(comm,{comm=it},label={Text("Comisión %")});Row(verticalAlignment=Alignment.CenterVertically){Switch(active,{active=it});Text(" Activo")}}},confirmButton={Button(onClick={save(name,phone,comm.toDoubleOrNull()?:0.0,active)}){Text("Guardar")}},dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}})
+}
+
+@Composable
+fun ServicesScreen(s:Session,onBack:()->Unit){
+    var list by remember{mutableStateOf<List<Service>>(emptyList())};var edit by remember{mutableStateOf<Service?>(null)};var create by remember{mutableStateOf(false)};var err by remember{mutableStateOf("")};val scope=rememberCoroutineScope()
+    fun load(){scope.launch{runCatching{val a=Api.get("/api/services.php",s.token).getJSONArray("items");List(a.length()){i->val o=a.getJSONObject(i);Service(o.long("id"),o.str("nombre"),o.dbl("precio"),o.int("duracion_min"),if(o.isNull("comision_pct"))null else o.dbl("comision_pct"),o.bool("activo"))}}.onSuccess{list=it}.onFailure{err=it.message?:"Error"}}}
+    LaunchedEffect(Unit){load()}
+    ManagedList("Servicios",onBack,{create=true},err){list.forEach{x->item{Surface(color=Tarjeta,shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth().clickable{edit=x}){Column(Modifier.padding(14.dp)){Text(x.name,fontWeight=FontWeight.Bold);Text("${money(x.price)} · ${x.duration} min · ${if(x.active)"Activo" else "Inactivo"}",color=Gris)}}}}}
+    if(create||edit!=null) ServiceDialog(edit,{create=false;edit=null}){name,price,dur,comm,active->
+        scope.launch{runCatching{val j=JSONObject().put("action","save").put("id",edit?.id?:0).put("nombre",name).put("precio",price).put("duracion_min",dur).put("activo",if(active)1 else 0);if(comm!=null)j.put("comision_pct",comm);Api.post("/api/services.php",s.token,j)}
+            .onSuccess{create=false;edit=null;load()}.onFailure{err=it.message?:"Error"}}
+    }
+}
+@Composable fun ServiceDialog(x:Service?,dismiss:()->Unit,save:(String,Double,Int,Double?,Boolean)->Unit){
+    var name by remember{mutableStateOf(x?.name?:"")};var price by remember{mutableStateOf((x?.price?:12000.0).toInt().toString())};var dur by remember{mutableStateOf((x?.duration?:30).toString())};var comm by remember{mutableStateOf(x?.commission?.toString()?:"")};var active by remember{mutableStateOf(x?.active?:true)}
+    AlertDialog(onDismissRequest=dismiss,title={Text("Servicio")},text={Column{OutlinedTextField(name,{name=it},label={Text("Nombre")});OutlinedTextField(price,{price=it},label={Text("Precio")});OutlinedTextField(dur,{dur=it},label={Text("Duración min")});OutlinedTextField(comm,{comm=it},label={Text("Comisión % opcional")});Row(verticalAlignment=Alignment.CenterVertically){Switch(active,{active=it});Text(" Activo")}}},confirmButton={Button(onClick={save(name,price.toDoubleOrNull()?:0.0,dur.toIntOrNull()?:30,comm.toDoubleOrNull(),active)}){Text("Guardar")}},dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}})
+}
+
+@Composable
+fun ClientsScreen(s:Session){
+    var list by remember{mutableStateOf<List<Client>>(emptyList())};var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<Client?>(null)};var err by remember{mutableStateOf("")};val scope=rememberCoroutineScope()
+    fun load(){scope.launch{runCatching{val a=Api.get("/api/clients.php",s.token).getJSONArray("items");List(a.length()){i->val o=a.getJSONObject(i);Client(o.long("id"),o.str("nombre"),o.str("telefono"),o.int("visitas"),o.dbl("gasto_total"),o.int("puntos"))}}.onSuccess{list=it}.onFailure{err=it.message?:"Error"}}}
+    LaunchedEffect(Unit){load()}
+    ManagedList("Clientes",{}, {create=true},err,showBack=false){list.forEach{x->item{Surface(color=Tarjeta,shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth().clickable{edit=x}){Column(Modifier.padding(14.dp)){Text(x.name,fontWeight=FontWeight.Bold);Text("${x.phone} · ${x.visits} visitas · ${money(x.spent)} · ${x.points} puntos",color=Gris)}}}}}
+    if(create||edit!=null) ClientDialog(edit,{create=false;edit=null}){n,p->
+        scope.launch{runCatching{Api.post("/api/clients.php",s.token,JSONObject().put("id",edit?.id?:0).put("nombre",n).put("telefono",p))}.onSuccess{create=false;edit=null;load()}.onFailure{err=it.message?:"Error"}}
+    }
+}
+@Composable fun ClientDialog(x:Client?,dismiss:()->Unit,save:(String,String)->Unit){
+    var name by remember{mutableStateOf(x?.name?:"")};var phone by remember{mutableStateOf(x?.phone?:"")}
+    AlertDialog(onDismissRequest=dismiss,title={Text("Cliente")},text={Column{OutlinedTextField(name,{name=it},label={Text("Nombre")});OutlinedTextField(phone,{phone=it},label={Text("Teléfono")})}},confirmButton={Button(onClick={save(name,phone)}){Text("Guardar")}},dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}})
+}
+
+@Composable
+fun ProductsScreen(s:Session,onBack:()->Unit){
+    var list by remember{mutableStateOf<List<Product>>(emptyList())};var create by remember{mutableStateOf(false)};var edit by remember{mutableStateOf<Product?>(null)};var err by remember{mutableStateOf("")};val scope=rememberCoroutineScope()
+    fun load(){scope.launch{runCatching{val a=Api.get("/api/products.php",s.token).getJSONArray("items");List(a.length()){i->val o=a.getJSONObject(i);Product(o.long("id"),o.str("nombre"),o.dbl("precio"),o.int("stock"),o.int("stock_minimo"),o.bool("activo"))}}.onSuccess{list=it}.onFailure{err=it.message?:"Error"}}}
+    LaunchedEffect(Unit){load()}
+    ManagedList("Inventario",onBack,{create=true},err){list.forEach{x->item{Surface(color=if(x.stock<=x.minStock)Color(0xFF412323) else Tarjeta,shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(14.dp)){Row{Column(Modifier.weight(1f).clickable{edit=x}){Text(x.name,fontWeight=FontWeight.Bold);Text("${money(x.price)} · Stock ${x.stock} · mínimo ${x.minStock}",color=Gris)};IconButton(onClick={scope.launch{runCatching{Api.post("/api/products.php",s.token,JSONObject().put("action","adjust_stock").put("id",x.id).put("cantidad",-1))}.onSuccess{load()}.onFailure{err=it.message?:"Error"}}}){Icon(Icons.Default.Remove,null)};IconButton(onClick={scope.launch{runCatching{Api.post("/api/products.php",s.token,JSONObject().put("action","adjust_stock").put("id",x.id).put("cantidad",1))}.onSuccess{load()}}}){Icon(Icons.Default.Add,null)}}}}}}}
+    if(create||edit!=null) ProductDialog(edit,{create=false;edit=null}){n,p,st,min,act->
+        scope.launch{runCatching{Api.post("/api/products.php",s.token,JSONObject().put("action","save").put("id",edit?.id?:0).put("nombre",n).put("precio",p).put("stock",st).put("stock_minimo",min).put("activo",if(act)1 else 0))}.onSuccess{create=false;edit=null;load()}.onFailure{err=it.message?:"Error"}}
+    }
+}
+@Composable fun ProductDialog(x:Product?,dismiss:()->Unit,save:(String,Double,Int,Int,Boolean)->Unit){
+    var n by remember{mutableStateOf(x?.name?:"")};var p by remember{mutableStateOf((x?.price?:0.0).toInt().toString())};var st by remember{mutableStateOf((x?.stock?:0).toString())};var min by remember{mutableStateOf((x?.minStock?:2).toString())};var act by remember{mutableStateOf(x?.active?:true)}
+    AlertDialog(onDismissRequest=dismiss,title={Text("Producto")},text={Column{OutlinedTextField(n,{n=it},label={Text("Nombre")});OutlinedTextField(p,{p=it},label={Text("Precio")});OutlinedTextField(st,{st=it},label={Text("Stock")});OutlinedTextField(min,{min=it},label={Text("Stock mínimo")});Row(verticalAlignment=Alignment.CenterVertically){Switch(act,{act=it});Text(" Activo")}}},confirmButton={Button(onClick={save(n,p.toDoubleOrNull()?:0.0,st.toIntOrNull()?:0,min.toIntOrNull()?:0,act)}){Text("Guardar")}},dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}})
+}
+
+@Composable
+fun CashScreen(s:Session){
+    var sales by remember{mutableStateOf<List<Sale>>(emptyList())};var services by remember{mutableStateOf<List<Service>>(emptyList())};var barbers by remember{mutableStateOf<List<Barber>>(emptyList())};var products by remember{mutableStateOf<List<Product>>(emptyList())};var clients by remember{mutableStateOf<List<Client>>(emptyList())}
+    var serviceSale by remember{mutableStateOf(false)};var productSale by remember{mutableStateOf(false)};var err by remember{mutableStateOf("")};val scope=rememberCoroutineScope()
+    fun load(){scope.launch{runCatching{
+        val a=Api.get("/api/sales.php?from=${monthStart()}&to=${today()}",s.token).getJSONArray("items")
+        val sv=Api.get("/api/services.php",s.token).getJSONArray("items");val br=Api.get("/api/barbers.php",s.token).getJSONArray("items");val pr=Api.get("/api/products.php",s.token).getJSONArray("items");val cl=Api.get("/api/clients.php",s.token).getJSONArray("items")
+        listOf(
+            List(a.length()){i->val o=a.getJSONObject(i);Sale(o.long("id"),o.dbl("total"),o.dbl("comision_total"),o.str("medio_pago"),o.str("creado_en"),o.str("detalle"),o.str("cliente"),o.str("barbero"))},
+            List(sv.length()){i->val o=sv.getJSONObject(i);Service(o.long("id"),o.str("nombre"),o.dbl("precio"),o.int("duracion_min"),if(o.isNull("comision_pct"))null else o.dbl("comision_pct"),o.bool("activo"))},
+            List(br.length()){i->val o=br.getJSONObject(i);Barber(o.long("id"),o.str("nombre"),o.str("telefono"),o.dbl("comision_pct"),o.bool("activo"))},
+            List(pr.length()){i->val o=pr.getJSONObject(i);Product(o.long("id"),o.str("nombre"),o.dbl("precio"),o.int("stock"),o.int("stock_minimo"),o.bool("activo"))},
+            List(cl.length()){i->val o=cl.getJSONObject(i);Client(o.long("id"),o.str("nombre"),o.str("telefono"),o.int("visitas"),o.dbl("gasto_total"),o.int("puntos"))}
         )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it; error = "" },
-            label = { Text("Contraseña") },
-            leadingIcon = { Icon(Icons.Default.Lock, null) },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        if (error.isNotBlank()) {
-            Spacer(Modifier.height(12.dp))
-            Surface(color = Rojo.copy(alpha = .16f), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                Text(error, color = Rojo, modifier = Modifier.padding(12.dp), fontSize = 13.sp)
-            }
-        }
-
-        Spacer(Modifier.height(20.dp))
-        Button(
-            onClick = {
-                if (email.isBlank() || password.isBlank()) {
-                    error = "Ingresa correo y contraseña."
-                } else {
-                    loading = true
-                    error = ""
-                    scope.launch {
-                        val result = onLogin(email.trim(), password)
-                        if (result.isFailure) {
-                            error = result.exceptionOrNull()?.message ?: "No se pudo conectar con el servidor."
-                        }
-                        loading = false
-                    }
-                }
-            },
-            enabled = !loading,
-            modifier = Modifier.fillMaxWidth().height(54.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black),
-            shape = RoundedCornerShape(15.dp)
-        ) {
-            if (loading) {
-                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.Black)
-                Spacer(Modifier.width(10.dp))
-                Text("CONECTANDO...", fontWeight = FontWeight.Bold)
-            } else {
-                Text("INGRESAR", fontWeight = FontWeight.Bold)
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        Text("v5 · inicio de sesión real en la nube", color = Gris, fontSize = 12.sp)
+    }.onSuccess{
+        @Suppress("UNCHECKED_CAST")
+        sales=it[0] as List<Sale>; services=it[1] as List<Service>;barbers=it[2] as List<Barber>;products=it[3] as List<Product>;clients=it[4] as List<Client>
+    }.onFailure{err=it.message?:"Error"}}}
+    LaunchedEffect(Unit){load()}
+    Column(Modifier.fillMaxSize().background(Fondo).padding(16.dp)){
+        Text("Caja",fontSize=26.sp,fontWeight=FontWeight.Bold)
+        val total=sales.sumOf{it.total};Text("Este mes: ${money(total)}",color=Dorado,fontSize=20.sp)
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button(onClick={serviceSale=true},modifier=Modifier.weight(1f)){Text("Cobrar servicio")};Button(onClick={productSale=true},modifier=Modifier.weight(1f)){Text("Vender producto")}}
+        if(err.isNotBlank()) ErrorBox(err)
+        Spacer(Modifier.height(10.dp))
+        LazyColumn(verticalArrangement=Arrangement.spacedBy(7.dp)){items(sales){x->Surface(color=Tarjeta,shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth()){Column(Modifier.padding(13.dp)){Text("${money(x.total)} · ${x.detail}",fontWeight=FontWeight.Bold);Text("${x.payment} · ${x.created} · ${x.barber}",color=Gris)}}}}
+    }
+    if(serviceSale) ServiceSaleDialog(services.filter{it.active},barbers.filter{it.active},clients,{serviceSale=false}){svc,bar,cli,pay,disc,tip->
+        scope.launch{runCatching{Api.post("/api/sales.php",s.token,JSONObject().put("tipo","servicio").put("servicio_id",svc).put("barbero_id",bar).put("cliente_id",cli).put("medio_pago",pay).put("descuento",disc).put("propina",tip))}.onSuccess{serviceSale=false;load()}.onFailure{err=it.message?:"Error"}}
+    }
+    if(productSale) ProductSaleDialog(products.filter{it.active&&it.stock>0},clients,{productSale=false}){pid,qty,cli,pay->
+        scope.launch{runCatching{Api.post("/api/sales.php",s.token,JSONObject().put("tipo","producto").put("producto_id",pid).put("cantidad",qty).put("cliente_id",cli).put("medio_pago",pay))}.onSuccess{productSale=false;load()}.onFailure{err=it.message?:"Error"}}
     }
 }
 
 @Composable
-fun DashboardScreen(shopName: String, appointments: List<Appointment>, barbers: List<BarberItem>, sales: List<SaleItem>, onOpenAgenda: () -> Unit, onOpenCaja: () -> Unit) {
-    val today = today()
-    val todayAppointments = appointments.count { it.date == today && it.status != "Cancelada" }
-    val todaySales = sales.filter { it.date == today }.sumOf { it.amount }
-    val activeBarbers = barbers.count { it.active }
-    val next = appointments.filter { it.date == today && it.status in listOf("Pendiente", "Confirmada") }.sortedBy { it.time }.firstOrNull()
-    LazyColumn(modifier = Modifier.fillMaxSize().background(Fondo), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Panel de administración", color = Gris, fontSize = 13.sp)
-                    Text(shopName, color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold)
-                }
-                Surface(color = Dorado, shape = RoundedCornerShape(18.dp)) { Icon(Icons.Default.ContentCut, null, tint = Color.Black, modifier = Modifier.padding(13.dp).size(28.dp)) }
-            }
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatCard(todayAppointments.toString(), "Citas hoy", Modifier.weight(1f))
-                StatCard(money(todaySales), "Ventas", Modifier.weight(1f))
-                StatCard(activeBarbers.toString(), "Barberos", Modifier.weight(1f))
-            }
-        }
-        item {
-            Text("Próxima cita", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-            if (next == null) EmptyCard("No hay citas pendientes para hoy.") else {
-                Surface(modifier = Modifier.fillMaxWidth().clickable { onOpenAgenda() }, color = Tarjeta, shape = RoundedCornerShape(18.dp)) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Surface(color = Dorado.copy(alpha = 0.15f), shape = RoundedCornerShape(12.dp)) { Text(next.time, color = Dorado, fontWeight = FontWeight.Bold, modifier = Modifier.padding(12.dp)) }
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(next.client, color = Color.White, fontWeight = FontWeight.Bold)
-                            Text("${next.service} · ${next.barber}", color = Gris, fontSize = 13.sp)
-                        }
-                        Icon(Icons.Default.ChevronRight, null, tint = Dorado)
-                    }
-                }
-            }
-        }
-        item {
-            Text("Accesos rápidos", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                QuickCard("Agenda", "Nueva cita", Icons.Default.CalendarMonth, Modifier.weight(1f), onOpenAgenda)
-                QuickCard("Caja", "Registrar venta", Icons.Default.PointOfSale, Modifier.weight(1f), onOpenCaja)
-            }
-        }
-        item {
-            Surface(color = Dorado.copy(alpha = 0.12f), shape = RoundedCornerShape(18.dp)) {
-                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.NotificationsActive, null, tint = Dorado, modifier = Modifier.size(32.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text("Recordatorios activos", color = Color.White, fontWeight = FontWeight.Bold)
-                        Text("La app programa un aviso local 1 hora antes de cada cita.", color = Gris, fontSize = 12.sp)
-                    }
-                }
-            }
-        }
+fun ServiceSaleDialog(services:List<Service>,barbers:List<Barber>,clients:List<Client>,dismiss:()->Unit,save:(Long,Long,Long,String,Double,Double)->Unit){
+    var svc by remember{mutableStateOf(services.firstOrNull())};var bar by remember{mutableStateOf(barbers.firstOrNull())};var cli by remember{mutableStateOf<Client?>(null)};var pay by remember{mutableStateOf("efectivo")};var disc by remember{mutableStateOf("0")};var tip by remember{mutableStateOf("0")}
+    AlertDialog(onDismissRequest=dismiss,title={Text("Cobrar servicio")},text={Column(Modifier.verticalScroll(rememberScrollState())){Picker("Servicio",svc?.name?:"",services.map{it.name}){n->svc=services.firstOrNull{it.name==n}};Picker("Barbero",bar?.name?:"",barbers.map{it.name}){n->bar=barbers.firstOrNull{it.name==n}};Picker("Cliente",cli?.name?:"Sin cliente",listOf("Sin cliente")+clients.map{it.name}){n->cli=clients.firstOrNull{it.name==n}};Picker("Pago",pay,listOf("efectivo","transferencia","debito","credito","otro")){pay=it};OutlinedTextField(disc,{disc=it},label={Text("Descuento")});OutlinedTextField(tip,{tip=it},label={Text("Propina")})}},confirmButton={Button(onClick={if(svc!=null&&bar!=null)save(svc!!.id,bar!!.id,cli?.id?:0,pay,disc.toDoubleOrNull()?:0.0,tip.toDoubleOrNull()?:0.0)}){Text("Cobrar")}},dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}})
+}
+
+@Composable
+fun ProductSaleDialog(products:List<Product>,clients:List<Client>,dismiss:()->Unit,save:(Long,Int,Long,String)->Unit){
+    var p by remember{mutableStateOf(products.firstOrNull())};var cli by remember{mutableStateOf<Client?>(null)};var qty by remember{mutableStateOf("1")};var pay by remember{mutableStateOf("efectivo")}
+    AlertDialog(onDismissRequest=dismiss,title={Text("Vender producto")},text={Column{Picker("Producto",p?.name?:"",products.map{"${it.name} · Stock ${it.stock}"}){n->p=products.firstOrNull{n.startsWith(it.name)}};OutlinedTextField(qty,{qty=it},label={Text("Cantidad")});Picker("Cliente",cli?.name?:"Sin cliente",listOf("Sin cliente")+clients.map{it.name}){n->cli=clients.firstOrNull{it.name==n}};Picker("Pago",pay,listOf("efectivo","transferencia","debito","credito","otro")){pay=it}}},confirmButton={Button(onClick={if(p!=null)save(p!!.id,qty.toIntOrNull()?:1,cli?.id?:0,pay)}){Text("Vender")}},dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}})
+}
+
+@Composable
+fun ReportsScreen(s:Session,onBack:()->Unit){
+    var text by remember{mutableStateOf("Cargando...")};var rows by remember{mutableStateOf<List<String>>(emptyList())};val scope=rememberCoroutineScope()
+    LaunchedEffect(Unit){scope.launch{runCatching{val j=Api.get("/api/reports.php?from=${monthStart()}&to=${today()}",s.token);val x=j.getJSONObject("summary");val a=j.getJSONArray("por_barbero");Pair("Ventas ${money(x.dbl("ventas"))} · Comisiones ${money(x.dbl("comisiones"))} · ${x.int("operaciones")} operaciones",List(a.length()){i->val o=a.getJSONObject(i);"${o.str("nombre")}: ${money(o.dbl("ventas"))} · comisión ${money(o.dbl("comisiones"))}"})}.onSuccess{text=it.first;rows=it.second}.onFailure{text=it.message?:"Error"}}}
+    Column(Modifier.fillMaxSize().background(Fondo).padding(16.dp)){BackTitle("Reportes",onBack);Text(text,color=Dorado);Spacer(Modifier.height(12.dp));rows.forEach{CardLine(it);Spacer(Modifier.height(7.dp))}}
+}
+
+@Composable
+fun QrScreen(s:Session,onBack:()->Unit){
+    val ctx=LocalContext.current
+    val link="$BASE_URL/reservar.php?b=${s.slug}"
+    val bmp=remember(link){qrBitmap(link,650)}
+    Column(Modifier.fillMaxSize().background(Fondo).padding(20.dp).verticalScroll(rememberScrollState()),horizontalAlignment=Alignment.CenterHorizontally){
+        BackTitle("QR reservas",onBack);Spacer(Modifier.height(18.dp));bmp?.let{Image(it.asImageBitmap(),null,modifier=Modifier.size(280.dp))}
+        Spacer(Modifier.height(14.dp));Text(link,color=Gris)
+        Button(onClick={val i=Intent(Intent.ACTION_SEND).apply{type="text/plain";putExtra(Intent.EXTRA_TEXT,"Reserva tu hora aquí: $link")};ctx.startActivity(Intent.createChooser(i,"Compartir"))}){Icon(Icons.Default.Share,null);Spacer(Modifier.width(6.dp));Text("Compartir")}
+        OutlinedButton(onClick={ctx.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(link)))}){Text("Abrir página de reservas")}
+    }
+}
+fun qrBitmap(text:String,size:Int):Bitmap?=runCatching{val m=MultiFormatWriter().encode(text,BarcodeFormat.QR_CODE,size,size);Bitmap.createBitmap(size,size,Bitmap.Config.RGB_565).apply{for(x in 0 until size)for(y in 0 until size)setPixel(x,y,if(m[x,y])android.graphics.Color.BLACK else android.graphics.Color.WHITE)}}.getOrNull()
+
+@Composable
+fun MoreScreen(s:Session,navigate:(String)->Unit,onLogout:()->Unit){
+    LazyColumn(Modifier.fillMaxSize().background(Fondo),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
+        item{Text("Más",fontSize=26.sp,fontWeight=FontWeight.Bold)}
+        item{MenuCard("Barberos","Equipo y comisiones",Icons.Default.ContentCut){navigate("barberos")}}
+        item{MenuCard("Servicios","Precios y duración",Icons.Default.Build){navigate("servicios")}}
+        item{MenuCard("Inventario","Stock y productos",Icons.Default.Inventory2){navigate("inventario")}}
+        item{MenuCard("Reportes","Ventas y comisiones",Icons.Default.BarChart){navigate("reportes")}}
+        item{MenuCard("QR reservas","Página pública",Icons.Default.QrCode2){navigate("qr")}}
+        item{Text("${s.userName} · ${s.email}",color=Gris)}
+        item{OutlinedButton(onClick=onLogout,modifier=Modifier.fillMaxWidth()){Text("Cerrar sesión")}}
     }
 }
 
 @Composable
-fun StatCard(value: String, label: String, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier, color = Tarjeta, shape = RoundedCornerShape(16.dp)) {
-        Column(Modifier.padding(13.dp)) { Text(value, color = Dorado, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1); Text(label, color = Gris, fontSize = 11.sp) }
+fun ManagedList(title:String,onBack:()->Unit,onAdd:()->Unit,error:String,showBack:Boolean=true,content:LazyListScope.()->Unit){
+    Column(Modifier.fillMaxSize().background(Fondo).padding(16.dp)){
+        Row(verticalAlignment=Alignment.CenterVertically){if(showBack)IconButton(onClick=onBack){Icon(Icons.Default.ArrowBack,null)};Text(title,fontSize=25.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));IconButton(onClick=onAdd){Icon(Icons.Default.Add,null,tint=Dorado)}}
+        if(error.isNotBlank())ErrorBox(error)
+        LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp),content=content)
     }
 }
-
-@Composable
-fun QuickCard(title: String, subtitle: String, icon: ImageVector, modifier: Modifier, onClick: () -> Unit) {
-    Surface(modifier = modifier.clickable { onClick() }, color = Tarjeta, shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.padding(16.dp)) { Icon(icon, null, tint = Dorado, modifier = Modifier.size(30.dp)); Spacer(Modifier.height(14.dp)); Text(title, color = Color.White, fontWeight = FontWeight.Bold); Text(subtitle, color = Gris, fontSize = 12.sp) }
-    }
-}
-
-@Composable
-fun EmptyCard(text: String) {
-    Surface(color = Tarjeta, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) { Text(text, color = Gris, modifier = Modifier.padding(18.dp)) }
-}
-
-@Composable
-fun AgendaScreen(
-    appointments: List<Appointment>,
-    clients: List<ClientItem>,
-    services: List<ServiceItem>,
-    barbers: List<BarberItem>,
-    blocks: List<ScheduleBlock>,
-    onAdd: (Appointment) -> Unit,
-    onUpdate: (Appointment) -> Unit,
-    onCancel: (Appointment) -> Unit,
-    onConfirm: (Appointment) -> Unit,
-    onAddBlock: (ScheduleBlock) -> Unit,
-    onDeleteBlock: (ScheduleBlock) -> Unit,
-    onCharge: (Appointment, ChargeDraft) -> Unit,
-    onWhatsAppReminder: (Appointment) -> Unit
-) {
-    var showAdd by remember { mutableStateOf(false) }
-    var showBlock by remember { mutableStateOf(false) }
-    var charging by remember { mutableStateOf<Appointment?>(null) }
-    var editing by remember { mutableStateOf<Appointment?>(null) }
-    var filter by remember { mutableStateOf("Hoy") }
-
-    val visible = appointments.filter {
-        when (filter) {
-            "Hoy" -> it.date == today()
-            "7 días" -> isWithinDays(it.date, 7)
-            else -> true
-        }
-    }.sortedWith(compareBy<Appointment> { parseDate(it.date)?.time ?: Long.MAX_VALUE }.thenBy { it.time })
-
-    Scaffold(
-        containerColor = Fondo,
-        topBar = { SectionHeader("Agenda", "Diaria, semanal, bloqueos y estados") },
-        floatingActionButton = { FloatingActionButton(onClick = { showAdd = true }, containerColor = Dorado) { Icon(Icons.Default.Add, null, tint = Color.Black) } }
-    ) { padding ->
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Hoy", "7 días", "Todas").forEach { item ->
-                        FilterChip(selected = filter == item, onClick = { filter = item }, label = { Text(item) })
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = { showBlock = true }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Block, null); Spacer(Modifier.width(8.dp)); Text("Bloquear horario / descanso / feriado")
-                }
-            }
-            val todayBlocks = blocks.filter { filter == "Todas" || (filter == "Hoy" && it.date == today()) || (filter == "7 días" && isWithinDays(it.date, 7)) }
-            if (todayBlocks.isNotEmpty()) {
-                item { Text("Horarios bloqueados", color = Color.White, fontWeight = FontWeight.Bold) }
-                items(todayBlocks, key = { "b${it.id}" }) { block -> BlockCard(block) { onDeleteBlock(block) } }
-            }
-            item { Text("Citas", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp) }
-            if (visible.isEmpty()) item { EmptyCard("No hay citas en este período. Presiona + para crear una.") }
-            items(visible, key = { it.id }) { appt ->
-                AppointmentCard(
-                    appt = appt,
-                    onConfirm = { onConfirm(appt) },
-                    onEdit = { editing = appt },
-                    onCancel = { onCancel(appt) },
-                    onCharge = { charging = appt },
-                    onWhatsApp = { onWhatsAppReminder(appt) }
-                )
-            }
-        }
-    }
-
-    if (showAdd) {
-        NewAppointmentDialog(
-            clients = clients,
-            services = services.filter { it.active },
-            barbers = barbers.filter { it.active },
-            appointments = appointments,
-            blocks = blocks,
-            initial = null,
-            source = "Manual",
-            onDismiss = { showAdd = false },
-            onSave = { onAdd(it); showAdd = false }
-        )
-    }
-    editing?.let { current ->
-        NewAppointmentDialog(
-            clients, services.filter { it.active }, barbers.filter { it.active }, appointments, blocks,
-            initial = current, source = current.source,
-            onDismiss = { editing = null },
-            onSave = { onUpdate(it); editing = null }
-        )
-    }
-    if (showBlock) {
-        NewBlockDialog(barbers.filter { it.active }, { showBlock = false }) { onAddBlock(it); showBlock = false }
-    }
-    charging?.let { appt ->
-        PaymentDialog("Cobrar ${appt.client}", appt.price, { charging = null }) { draft -> onCharge(appt, draft); charging = null }
-    }
-}
-
-@Composable
-fun AppointmentCard(appt: Appointment, onConfirm: () -> Unit, onEdit: () -> Unit, onCancel: () -> Unit, onCharge: () -> Unit, onWhatsApp: () -> Unit) {
-    val statusColor = when (appt.status) { "Atendida" -> Verde; "Cancelada" -> Rojo; "Confirmada" -> Azul; else -> Dorado }
-    Surface(color = Tarjeta, shape = RoundedCornerShape(17.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(15.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(color = statusColor.copy(alpha = 0.14f), shape = RoundedCornerShape(10.dp)) { Text(appt.time, color = statusColor, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) }
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(appt.client, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text("${appt.date} · ${appt.service} · ${appt.duration} min", color = Gris, fontSize = 12.sp)
-                    Text("${appt.barber} · ${appt.source}", color = Gris, fontSize = 11.sp)
-                }
-                Text(money(appt.price), color = Dorado, fontWeight = FontWeight.Bold)
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(appt.status, color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                if (appt.phone.isNotBlank() && appt.status !in listOf("Atendida", "Cancelada")) IconButton(onClick = onWhatsApp) { Icon(Icons.Default.Message, null, tint = Verde) }
-                if (appt.status !in listOf("Atendida", "Cancelada")) IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, null, tint = Dorado) }
-            }
-            if (appt.status in listOf("Pendiente", "Confirmada")) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    if (appt.status == "Pendiente") TextButton(onClick = onConfirm) { Text("Confirmar", color = Azul) }
-                    TextButton(onClick = onCancel) { Text("Cancelar", color = Rojo) }
-                    Button(onClick = onCharge, colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)) { Text("Cobrar") }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun BlockCard(block: ScheduleBlock, onDelete: () -> Unit) {
-    Surface(color = Tarjeta2, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Block, null, tint = Rojo)
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text("${block.barber} · ${block.date}", color = Color.White, fontWeight = FontWeight.Bold)
-                Text("${block.start}–${block.end} · ${block.reason}", color = Gris, fontSize = 12.sp)
-            }
-            IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, null, tint = Rojo) }
-        }
-    }
-}
-
-@Composable
-fun NewBlockDialog(barbers: List<BarberItem>, onDismiss: () -> Unit, onSave: (ScheduleBlock) -> Unit) {
-    var barber by remember { mutableStateOf(barbers.firstOrNull()?.name ?: "") }
-    var date by remember { mutableStateOf(today()) }
-    var start by remember { mutableStateOf("13:00") }
-    var end by remember { mutableStateOf("14:00") }
-    var reason by remember { mutableStateOf("Descanso") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Bloquear horario") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                SelectField("Barbero", barber, barbers.map { it.name }) { barber = it }
-                OutlinedTextField(date, { date = it }, label = { Text("Fecha dd/MM/yyyy") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(start, { start = it }, label = { Text("Desde") }, modifier = Modifier.weight(1f), singleLine = true)
-                    OutlinedTextField(end, { end = it }, label = { Text("Hasta") }, modifier = Modifier.weight(1f), singleLine = true)
-                }
-                OutlinedTextField(reason, { reason = it }, label = { Text("Motivo") }, modifier = Modifier.fillMaxWidth())
-            }
-        },
-        confirmButton = { Button(onClick = { if (barber.isNotBlank()) onSave(ScheduleBlock(System.currentTimeMillis(), barber, date.trim(), start.trim(), end.trim(), reason.trim())) }, colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)) { Text("Guardar") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
-    )
-}
-
-@Composable
-fun NewAppointmentDialog(
-    clients: List<ClientItem>,
-    services: List<ServiceItem>,
-    barbers: List<BarberItem>,
-    appointments: List<Appointment>,
-    blocks: List<ScheduleBlock>,
-    initial: Appointment?,
-    source: String,
-    onDismiss: () -> Unit,
-    onSave: (Appointment) -> Unit
-) {
-    var client by remember(initial) { mutableStateOf(initial?.client ?: "") }
-    var phone by remember(initial) { mutableStateOf(initial?.phone ?: "") }
-    var serviceName by remember(initial, services) { mutableStateOf(initial?.service ?: services.firstOrNull()?.name.orEmpty()) }
-    var barberName by remember(initial, barbers) { mutableStateOf(initial?.barber ?: barbers.firstOrNull()?.name.orEmpty()) }
-    var date by remember(initial) { mutableStateOf(initial?.date ?: today()) }
-    var time by remember(initial) { mutableStateOf(initial?.time ?: "10:00") }
-    var error by remember { mutableStateOf("") }
-    val selectedService = services.firstOrNull { it.name == serviceName }
-    val price = selectedService?.price ?: initial?.price ?: 0
-    val duration = selectedService?.duration ?: initial?.duration ?: 30
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) if (source == "Online") "Reserva cliente" else "Nueva cita" else "Reprogramar cita") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(client, { client = it }, label = { Text("Cliente") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(phone, { phone = it }, label = { Text("Teléfono / WhatsApp") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), singleLine = true, modifier = Modifier.fillMaxWidth())
-                SelectField("Servicio", serviceName, services.map { it.name }) { serviceName = it }
-                SelectField("Barbero", barberName, barbers.map { it.name }) { barberName = it }
-                OutlinedTextField(date, { date = it }, label = { Text("Fecha (dd/MM/yyyy)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(time, { time = it }, label = { Text("Hora (HH:mm)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Text("${money(price)} · $duration min", color = Dorado, fontWeight = FontWeight.Bold)
-                if (clients.isNotEmpty() && source != "Online") Text("Tip: puedes usar el mismo teléfono de un cliente existente.", color = Gris, fontSize = 11.sp)
-                if (error.isNotBlank()) Text(error, color = Rojo, fontSize = 12.sp)
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val candidate = Appointment(
-                        id = initial?.id ?: System.currentTimeMillis(), client = client.trim(), phone = phone.trim(), service = serviceName,
-                        barber = barberName, date = date.trim(), time = time.trim(), status = initial?.status ?: "Pendiente", price = price,
-                        duration = duration, source = source
-                    )
-                    error = when {
-                        client.isBlank() -> "Ingresa el nombre del cliente."
-                        serviceName.isBlank() || barberName.isBlank() -> "Selecciona servicio y barbero."
-                        parseDateTime(candidate.date, candidate.time) == null -> "Revisa fecha y hora. Usa dd/MM/yyyy y HH:mm."
-                        appointmentHasConflict(candidate, appointments, blocks, initial?.id) -> "Ese barbero ya tiene una cita o bloqueo que se cruza con este horario."
-                        else -> ""
-                    }
-                    if (error.isBlank()) onSave(candidate)
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)
-            ) { Text(if (initial == null) "Guardar" else "Actualizar") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
-    )
-}
-
-@Composable
-fun CajaScreen(
-    sales: List<SaleItem>,
-    clients: List<ClientItem>,
-    services: List<ServiceItem>,
-    barbers: List<BarberItem>,
-    cashCloses: List<CashClose>,
-    onAddSale: (SaleItem) -> Unit,
-    onCloseCash: (CashClose) -> Unit
-) {
-    var showAdd by remember { mutableStateOf(false) }
-    var showClose by remember { mutableStateOf(false) }
-    val todaySales = sales.filter { it.date == today() }
-    val total = todaySales.sumOf { it.amount }
-    val cash = todaySales.filter { it.payment == "Efectivo" }.sumOf { it.amount }
-    val transfer = todaySales.filter { it.payment == "Transferencia" }.sumOf { it.amount }
-    val card = todaySales.filter { it.payment == "Débito / Crédito" }.sumOf { it.amount }
-    val lastClose = cashCloses.firstOrNull { it.date == today() }
-
-    Scaffold(
-        containerColor = Fondo,
-        topBar = { SectionHeader("Caja", "Ventas, descuentos, propinas y cierre") },
-        floatingActionButton = { FloatingActionButton(onClick = { showAdd = true }, containerColor = Dorado) { Icon(Icons.Default.AddShoppingCart, null, tint = Color.Black) } }
-    ) { padding ->
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text("Total de hoy", color = Gris); Text(money(total), color = Dorado, fontSize = 36.sp, fontWeight = FontWeight.Black) }
-                    OutlinedButton(onClick = { showClose = true }) { Icon(Icons.Default.Lock, null); Spacer(Modifier.width(6.dp)); Text("Cerrar caja") }
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MiniMoneyCard("Efectivo", cash, Modifier.weight(1f)); MiniMoneyCard("Transfer.", transfer, Modifier.weight(1f)); MiniMoneyCard("Tarjeta", card, Modifier.weight(1f))
-                }
-            }
-            if (lastClose != null) item {
-                Surface(color = Verde.copy(alpha = 0.12f), shape = RoundedCornerShape(15.dp)) {
-                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                        Text("Último cierre de hoy · ${lastClose.time}", color = Verde, fontWeight = FontWeight.Bold)
-                        Text("Total ${money(lastClose.total)} · Efectivo ${money(lastClose.cash)}", color = Gris, fontSize = 12.sp)
-                        if (lastClose.note.isNotBlank()) Text(lastClose.note, color = Gris, fontSize = 12.sp)
-                    }
-                }
-            }
-            item { Text("Movimientos", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold) }
-            if (sales.isEmpty()) item { EmptyCard("Todavía no hay ventas registradas.") }
-            items(sales, key = { it.id }) { sale ->
-                Surface(color = Tarjeta, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(15.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ReceiptLong, null, tint = Dorado); Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(sale.client.ifBlank { "Venta directa" }, color = Color.White, fontWeight = FontWeight.Bold)
-                                Text("${sale.service} · ${sale.barber}", color = Gris, fontSize = 12.sp)
-                                Text("${sale.date} ${sale.time} · ${sale.payment}", color = Gris, fontSize = 11.sp)
-                            }
-                            Text(money(sale.amount), color = Dorado, fontWeight = FontWeight.Bold)
-                        }
-                        if (sale.extra > 0 || sale.discount > 0 || sale.tip > 0) {
-                            Spacer(Modifier.height(8.dp))
-                            Text("Extra/productos ${money(sale.extra)} · Descuento ${money(sale.discount)} · Propina ${money(sale.tip)}", color = Gris, fontSize = 11.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showAdd) {
-        NewSaleDialog(clients, services.filter { it.active }, barbers.filter { it.active }, { showAdd = false }) { onAddSale(it); showAdd = false }
-    }
-    if (showClose) {
-        CloseCashDialog(total, cash, transfer, card, { showClose = false }) { note ->
-            onCloseCash(CashClose(System.currentTimeMillis(), today(), nowTime(), total, cash, transfer, card, note)); showClose = false
-        }
-    }
-}
-
-@Composable
-fun MiniMoneyCard(label: String, value: Int, modifier: Modifier) {
-    Surface(modifier = modifier, color = Tarjeta, shape = RoundedCornerShape(14.dp)) { Column(Modifier.padding(10.dp)) { Text(money(value), color = Dorado, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1); Text(label, color = Gris, fontSize = 10.sp) } }
-}
-
-@Composable
-fun NewSaleDialog(clients: List<ClientItem>, services: List<ServiceItem>, barbers: List<BarberItem>, onDismiss: () -> Unit, onSave: (SaleItem) -> Unit) {
-    var client by remember { mutableStateOf(clients.firstOrNull()?.name ?: "Venta directa") }
-    var serviceName by remember { mutableStateOf(services.firstOrNull()?.name ?: "Servicio") }
-    var barberName by remember { mutableStateOf(barbers.firstOrNull()?.name ?: "Sin asignar") }
-    var serviceAmount by remember { mutableStateOf((services.firstOrNull()?.price ?: 0).toString()) }
-    var extra by remember { mutableStateOf("0") }
-    var discount by remember { mutableStateOf("0") }
-    var tip by remember { mutableStateOf("0") }
-    var payment by remember { mutableStateOf("Efectivo") }
-    val selectedService = services.firstOrNull { it.name == serviceName }
-    val selectedBarber = barbers.firstOrNull { it.name == barberName }
-    val base = serviceAmount.toIntOrNull() ?: 0
-    val total = max(0, base + (extra.toIntOrNull() ?: 0) - (discount.toIntOrNull() ?: 0)) + (tip.toIntOrNull() ?: 0)
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Nueva venta") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(client, { client = it }, label = { Text("Cliente") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                SelectField("Servicio", serviceName, services.map { it.name }) { serviceName = it; serviceAmount = (services.firstOrNull { s -> s.name == it }?.price ?: 0).toString() }
-                SelectField("Barbero", barberName, barbers.map { it.name }) { barberName = it }
-                MoneyField("Valor servicio", serviceAmount) { serviceAmount = it }
-                MoneyField("Productos / extras", extra) { extra = it }
-                MoneyField("Descuento", discount) { discount = it }
-                MoneyField("Propina", tip) { tip = it }
-                SelectField("Pago", payment, listOf("Efectivo", "Transferencia", "Débito / Crédito")) { payment = it }
-                Text("Total: ${money(total)}", color = Dorado, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-            }
-        },
-        confirmButton = {
-            Button(onClick = {
-                if (total > 0) {
-                    val discountValue = discount.toIntOrNull() ?: 0
-                    val commission = commissionAmount(max(0, base - discountValue), selectedService, selectedBarber)
-                    onSave(SaleItem(System.currentTimeMillis(), client.trim(), serviceName, barberName, total, payment, today(), nowTime(), base, extra.toIntOrNull() ?: 0, discountValue, tip.toIntOrNull() ?: 0, commission))
-                }
-            }, colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)) { Text("Registrar") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
-    )
-}
-
-@Composable
-fun MoneyField(label: String, value: String, onChange: (String) -> Unit) {
-    OutlinedTextField(value, { onChange(it.filter(Char::isDigit)) }, label = { Text(label) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
-}
-
-@Composable
-fun PaymentDialog(title: String, baseAmount: Int, onDismiss: () -> Unit, onConfirm: (ChargeDraft) -> Unit) {
-    var payment by remember { mutableStateOf("Efectivo") }
-    var extra by remember { mutableStateOf("0") }
-    var discount by remember { mutableStateOf("0") }
-    var tip by remember { mutableStateOf("0") }
-    val total = max(0, baseAmount + (extra.toIntOrNull() ?: 0) - (discount.toIntOrNull() ?: 0)) + (tip.toIntOrNull() ?: 0)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Servicio: ${money(baseAmount)}", color = Dorado, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                MoneyField("Productos / extras", extra) { extra = it }
-                MoneyField("Descuento", discount) { discount = it }
-                MoneyField("Propina", tip) { tip = it }
-                SelectField("Medio de pago", payment, listOf("Efectivo", "Transferencia", "Débito / Crédito")) { payment = it }
-                Text("Total a cobrar: ${money(total)}", color = Dorado, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-            }
-        },
-        confirmButton = { Button(onClick = { onConfirm(ChargeDraft(payment, extra.toIntOrNull() ?: 0, discount.toIntOrNull() ?: 0, tip.toIntOrNull() ?: 0)) }, colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)) { Text("Confirmar cobro") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
-    )
-}
-
-@Composable
-fun CloseCashDialog(total: Int, cash: Int, transfer: Int, card: Int, onDismiss: () -> Unit, onSave: (String) -> Unit) {
-    var note by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Cierre de caja") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Total ${money(total)}", color = Dorado, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                Text("Efectivo ${money(cash)}")
-                Text("Transferencia ${money(transfer)}")
-                Text("Tarjeta ${money(card)}")
-                OutlinedTextField(note, { note = it }, label = { Text("Observación opcional") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
-            }
-        },
-        confirmButton = { Button(onClick = { onSave(note.trim()) }, colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)) { Text("Guardar cierre") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
-    )
-}
-
-@Composable
-fun ClientsScreen(clients: List<ClientItem>, onAdd: (ClientItem) -> Unit) {
-    var showAdd by remember { mutableStateOf(false) }
-    var search by remember { mutableStateOf("") }
-    val filtered = clients.filter { search.isBlank() || it.name.contains(search, true) || it.phone.contains(search, true) }
-    Scaffold(containerColor = Fondo, topBar = { SectionHeader("Clientes", "Historial y fidelización") }, floatingActionButton = { FloatingActionButton(onClick = { showAdd = true }, containerColor = Dorado) { Icon(Icons.Default.PersonAdd, null, tint = Color.Black) } }) { padding ->
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item { OutlinedTextField(search, { search = it }, label = { Text("Buscar cliente") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
-            if (filtered.isEmpty()) item { EmptyCard("No hay clientes para mostrar.") }
-            items(filtered, key = { it.id }) { client ->
-                Surface(color = Tarjeta, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(15.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(color = Dorado.copy(alpha = 0.15f), shape = RoundedCornerShape(50)) { Icon(Icons.Default.Person, null, tint = Dorado, modifier = Modifier.padding(10.dp)) }
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) { Text(client.name, color = Color.White, fontWeight = FontWeight.Bold); Text(client.phone.ifBlank { "Sin teléfono" }, color = Gris, fontSize = 12.sp) }
-                            Text("${client.visits} visitas", color = Dorado, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Spacer(Modifier.height(10.dp)); Text("Gasto acumulado: ${money(client.spent)}", color = Gris, fontSize = 13.sp); if (client.notes.isNotBlank()) Text(client.notes, color = Gris, fontSize = 12.sp)
-                    }
-                }
-            }
-        }
-    }
-    if (showAdd) NewClientDialog({ showAdd = false }) { onAdd(it); showAdd = false }
-}
-
-@Composable
-fun NewClientDialog(onDismiss: () -> Unit, onSave: (ClientItem) -> Unit) {
-    var name by remember { mutableStateOf("") }; var phone by remember { mutableStateOf("") }; var notes by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Nuevo cliente") }, text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedTextField(name, { name = it }, label = { Text("Nombre") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(phone, { phone = it }, label = { Text("Teléfono") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(notes, { notes = it }, label = { Text("Observaciones") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
-    } }, confirmButton = { Button(onClick = { if (name.isNotBlank()) onSave(ClientItem(System.currentTimeMillis(), name.trim(), phone.trim(), 0, 0, notes.trim())) }, colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)) { Text("Guardar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
-}
-
-
-@Composable
-fun LoyaltyScreen(
-    clients: List<ClientItem>,
-    rewardEvery: Int,
-    rewardText: String,
-    onBack: () -> Unit,
-    onRedeem: (ClientItem) -> Unit,
-    onSaveSettings: (Int, String) -> Unit
-) {
-    var showSettings by remember { mutableStateOf(false) }
-    val safeEvery = rewardEvery.coerceAtLeast(1)
-    val sorted = clients.sortedByDescending { it.visits }
-
-    Scaffold(
-        containerColor = Fondo,
-        topBar = { BackHeader("Fidelización", onBack) },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { showSettings = true }, containerColor = Dorado) {
-                Icon(Icons.Default.Settings, null, tint = Color.Black)
-            }
-        }
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            item {
-                Surface(color = Dorado.copy(alpha = 0.12f), shape = RoundedCornerShape(16.dp)) {
-                    Column(Modifier.fillMaxWidth().padding(15.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.CardGiftcard, null, tint = Dorado)
-                            Spacer(Modifier.width(10.dp))
-                            Text("Premio cada $safeEvery visitas", color = Dorado, fontWeight = FontWeight.Bold)
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        Text(rewardText, color = Color.White)
-                        Text("Los premios se calculan con las visitas registradas en caja.", color = Gris, fontSize = 11.sp)
-                    }
-                }
-            }
-
-            if (sorted.isEmpty()) item { EmptyCard("Todavía no hay clientes.") }
-
-            items(sorted, key = { it.id }) { client ->
-                val earnedRewards = client.visits / safeEvery
-                val availableRewards = max(0, earnedRewards - client.rewardsRedeemed)
-                val progress = client.visits % safeEvery
-                Surface(color = Tarjeta, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(15.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(color = Dorado.copy(alpha = 0.15f), shape = RoundedCornerShape(50)) {
-                                Icon(Icons.Default.Person, null, tint = Dorado, modifier = Modifier.padding(10.dp))
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(client.name, color = Color.White, fontWeight = FontWeight.Bold)
-                                Text("${client.visits} visitas · ${money(client.spent)}", color = Gris, fontSize = 12.sp)
-                            }
-                            if (availableRewards > 0) {
-                                Surface(color = Verde.copy(alpha = 0.15f), shape = RoundedCornerShape(10.dp)) {
-                                    Text("$availableRewards premio${if (availableRewards == 1) "" else "s"}", color = Verde, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp))
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        LinearProgressIndicator(
-                            progress = { progress.toFloat() / safeEvery.toFloat() },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = Dorado,
-                            trackColor = Tarjeta2
-                        )
-                        Spacer(Modifier.height(5.dp))
-                        Text("$progress de $safeEvery para el próximo premio", color = Gris, fontSize = 11.sp)
-                        if (availableRewards > 0) {
-                            Spacer(Modifier.height(10.dp))
-                            Button(
-                                onClick = { onRedeem(client) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Default.Redeem, null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("Canjear: $rewardText")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showSettings) {
-        LoyaltySettingsDialog(
-            currentEvery = safeEvery,
-            currentReward = rewardText,
-            onDismiss = { showSettings = false }
-        ) { every, reward ->
-            onSaveSettings(every, reward)
-            showSettings = false
-        }
-    }
-}
-
-@Composable
-fun LoyaltySettingsDialog(
-    currentEvery: Int,
-    currentReward: String,
-    onDismiss: () -> Unit,
-    onSave: (Int, String) -> Unit
-) {
-    var every by remember { mutableStateOf(currentEvery.toString()) }
-    var reward by remember { mutableStateOf(currentReward) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Configurar fidelización") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = every,
-                    onValueChange = { every = it.filter(Char::isDigit).take(2) },
-                    label = { Text("Visitas para obtener premio") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = reward,
-                    onValueChange = { reward = it },
-                    label = { Text("Premio") },
-                    placeholder = { Text("Ej: Corte gratis") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onSave((every.toIntOrNull() ?: 10).coerceAtLeast(1), reward.trim()) },
-                colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)
-            ) { Text("Guardar") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
-    )
-}
-
-@Composable
-fun InventoryScreen(
-    products: List<ProductItem>,
-    onBack: () -> Unit,
-    onAdd: (ProductItem) -> Unit,
-    onAdjustStock: (ProductItem, Int) -> Unit,
-    onToggle: (ProductItem) -> Unit,
-    onSell: (ProductItem, Int, String) -> Unit
-) {
-    var showAdd by remember { mutableStateOf(false) }
-    var productToSell by remember { mutableStateOf<ProductItem?>(null) }
-    val lowStock = products.count { it.active && it.stock <= it.minStock }
-
-    Scaffold(
-        containerColor = Fondo,
-        topBar = { BackHeader("Inventario", onBack) },
-        floatingActionButton = {
-            FloatingActionButton(onClick = { showAdd = true }, containerColor = Dorado) {
-                Icon(Icons.Default.Add, null, tint = Color.Black)
-            }
-        }
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            if (lowStock > 0) {
-                item {
-                    Surface(color = Rojo.copy(alpha = 0.12f), shape = RoundedCornerShape(15.dp)) {
-                        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.WarningAmber, null, tint = Rojo)
-                            Spacer(Modifier.width(10.dp))
-                            Column {
-                                Text("Stock bajo", color = Rojo, fontWeight = FontWeight.Bold)
-                                Text("$lowStock producto${if (lowStock == 1) "" else "s"} necesita${if (lowStock == 1) "" else "n"} reposición.", color = Gris, fontSize = 12.sp)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (products.isEmpty()) item { EmptyCard("Agrega productos para comenzar a controlar stock.") }
-
-            items(products, key = { it.id }) { product ->
-                val isLow = product.stock <= product.minStock
-                Surface(color = Tarjeta, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(15.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Inventory2, null, tint = if (product.active) Dorado else Gris, modifier = Modifier.size(28.dp))
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(product.name, color = Color.White, fontWeight = FontWeight.Bold)
-                                Text("${money(product.price)} · Stock ${product.stock}", color = if (isLow) Rojo else Gris, fontSize = 12.sp)
-                                Text("Avisar al llegar a ${product.minStock}", color = Gris, fontSize = 11.sp)
-                            }
-                            Switch(checked = product.active, onCheckedChange = { onToggle(product) })
-                        }
-
-                        Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedButton(
-                                onClick = { onAdjustStock(product, -1) },
-                                enabled = product.stock > 0,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Default.Remove, null)
-                                Spacer(Modifier.width(4.dp))
-                                Text("Stock")
-                            }
-                            OutlinedButton(
-                                onClick = { onAdjustStock(product, 1) },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Default.Add, null)
-                                Spacer(Modifier.width(4.dp))
-                                Text("Stock")
-                            }
-                            Button(
-                                onClick = { productToSell = product },
-                                enabled = product.active && product.stock > 0,
-                                colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Default.ShoppingCart, null)
-                                Spacer(Modifier.width(4.dp))
-                                Text("Vender")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showAdd) {
-        NewProductDialog(
-            onDismiss = { showAdd = false },
-            onSave = {
-                onAdd(it)
-                showAdd = false
-            }
-        )
-    }
-
-    productToSell?.let { product ->
-        ProductSaleDialog(
-            product = product,
-            onDismiss = { productToSell = null },
-            onConfirm = { quantity, payment ->
-                onSell(product, quantity, payment)
-                productToSell = null
-            }
-        )
-    }
-}
-
-@Composable
-fun NewProductDialog(onDismiss: () -> Unit, onSave: (ProductItem) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var price by remember { mutableStateOf("") }
-    var stock by remember { mutableStateOf("0") }
-    var minStock by remember { mutableStateOf("2") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Nuevo producto") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(name, { name = it }, label = { Text("Producto") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                MoneyField("Precio de venta", price) { price = it }
-                OutlinedTextField(stock, { stock = it.filter(Char::isDigit) }, label = { Text("Stock inicial") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(minStock, { minStock = it.filter(Char::isDigit) }, label = { Text("Avisar cuando queden") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val value = price.toIntOrNull() ?: 0
-                    if (name.isNotBlank() && value > 0) {
-                        onSave(
-                            ProductItem(
-                                id = System.currentTimeMillis(),
-                                name = name.trim(),
-                                price = value,
-                                stock = stock.toIntOrNull() ?: 0,
-                                minStock = minStock.toIntOrNull() ?: 0,
-                                active = true
-                            )
-                        )
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)
-            ) { Text("Guardar") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
-    )
-}
-
-@Composable
-fun ProductSaleDialog(
-    product: ProductItem,
-    onDismiss: () -> Unit,
-    onConfirm: (Int, String) -> Unit
-) {
-    var quantity by remember { mutableStateOf("1") }
-    var payment by remember { mutableStateOf("Efectivo") }
-    val qty = (quantity.toIntOrNull() ?: 1).coerceAtLeast(1).coerceAtMost(product.stock.coerceAtLeast(1))
-    val total = product.price * qty
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Vender ${product.name}") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Disponible: ${product.stock}", color = Gris)
-                OutlinedTextField(
-                    value = quantity,
-                    onValueChange = { quantity = it.filter(Char::isDigit).take(3) },
-                    label = { Text("Cantidad") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                SelectField("Pago", payment, listOf("Efectivo", "Transferencia", "Débito / Crédito")) { payment = it }
-                Text("Total: ${money(total)}", color = Dorado, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { if (product.stock > 0) onConfirm(qty, payment) },
-                enabled = product.stock > 0,
-                colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)
-            ) { Text("Confirmar venta") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
-    )
-}
-
-@Composable
-fun MoreScreen(
-    onBarbers: () -> Unit,
-    onServices: () -> Unit,
-    onCommissions: () -> Unit,
-    onLoyalty: () -> Unit,
-    onInventory: () -> Unit,
-    onQr: () -> Unit,
-    onSettings: () -> Unit,
-    onLogout: () -> Unit
-) {
-    LazyColumn(modifier = Modifier.fillMaxSize().background(Fondo), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { SectionHeader("Más", "Administración de la barbería") }
-        item { MoreCard(Icons.Default.ContentCut, "Barberos", "Equipo, estado y comisión", onBarbers) }
-        item { MoreCard(Icons.Default.Storefront, "Servicios", "Precios, duración y comisión especial", onServices) }
-        item { MoreCard(Icons.Default.Paid, "Comisiones", "Resumen por barbero", onCommissions) }
-        item { MoreCard(Icons.Default.Loyalty, "Fidelización", "Premios por visitas y clientes frecuentes", onLoyalty) }
-        item { MoreCard(Icons.Default.Inventory2, "Inventario", "Productos, stock bajo y ventas", onInventory) }
-        item { MoreCard(Icons.Default.QrCode2, "QR Reservas", "QR real, enlace y flujo de cliente", onQr) }
-        item { MoreCard(Icons.Default.Settings, "Configuración", "Datos de la barbería", onSettings) }
-        item { MoreCard(Icons.Default.Logout, "Cerrar sesión", "Salir de esta cuenta", onLogout) }
-    }
-}
-
-@Composable
-fun MoreCard(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxWidth().clickable { onClick() }, color = Tarjeta, shape = RoundedCornerShape(16.dp)) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = Dorado, modifier = Modifier.size(28.dp)); Spacer(Modifier.width(14.dp)); Column(Modifier.weight(1f)) { Text(title, color = Color.White, fontWeight = FontWeight.Bold); Text(subtitle, color = Gris, fontSize = 12.sp) }; Icon(Icons.Default.ChevronRight, null, tint = Gris) }
-    }
-}
-
-@Composable
-fun BarbersScreen(barbers: List<BarberItem>, onBack: () -> Unit, onAdd: (BarberItem) -> Unit, onToggle: (BarberItem) -> Unit) {
-    var showAdd by remember { mutableStateOf(false) }
-    Scaffold(containerColor = Fondo, topBar = { BackHeader("Barberos", onBack) }, floatingActionButton = { FloatingActionButton(onClick = { showAdd = true }, containerColor = Dorado) { Icon(Icons.Default.PersonAdd, null, tint = Color.Black) } }) { padding ->
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (barbers.isEmpty()) item { EmptyCard("Agrega el primer barbero.") }
-            items(barbers, key = { it.id }) { barber ->
-                Surface(color = Tarjeta, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.ContentCut, null, tint = if (barber.active) Dorado else Gris); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(barber.name, color = Color.White, fontWeight = FontWeight.Bold); Text("Comisión general ${barber.commission}%", color = Gris, fontSize = 12.sp) }; Switch(checked = barber.active, onCheckedChange = { onToggle(barber) }) }
-                }
-            }
-        }
-    }
-    if (showAdd) NewBarberDialog({ showAdd = false }) { onAdd(it); showAdd = false }
-}
-
-@Composable
-fun NewBarberDialog(onDismiss: () -> Unit, onSave: (BarberItem) -> Unit) {
-    var name by remember { mutableStateOf("") }; var commission by remember { mutableStateOf("40") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Nuevo barbero") }, text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedTextField(name, { name = it }, label = { Text("Nombre") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(commission, { commission = it.filter(Char::isDigit).take(3) }, label = { Text("Comisión general %") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
-    } }, confirmButton = { Button(onClick = { if (name.isNotBlank()) onSave(BarberItem(System.currentTimeMillis(), name.trim(), (commission.toIntOrNull() ?: 0).coerceIn(0, 100), true)) }, colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)) { Text("Guardar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
-}
-
-@Composable
-fun ServicesScreen(services: List<ServiceItem>, onBack: () -> Unit, onAdd: (ServiceItem) -> Unit, onToggle: (ServiceItem) -> Unit) {
-    var showAdd by remember { mutableStateOf(false) }
-    Scaffold(containerColor = Fondo, topBar = { BackHeader("Servicios", onBack) }, floatingActionButton = { FloatingActionButton(onClick = { showAdd = true }, containerColor = Dorado) { Icon(Icons.Default.Add, null, tint = Color.Black) } }) { padding ->
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (services.isEmpty()) item { EmptyCard("Agrega el primer servicio.") }
-            items(services, key = { it.id }) { service ->
-                Surface(color = Tarjeta, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Storefront, null, tint = if (service.active) Dorado else Gris); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(service.name, color = Color.White, fontWeight = FontWeight.Bold); Text("${money(service.price)} · ${service.duration} min", color = Gris, fontSize = 12.sp); Text(if (service.commissionOverride >= 0) "Comisión especial ${service.commissionOverride}%" else "Usa comisión del barbero", color = Gris, fontSize = 11.sp) }; Switch(checked = service.active, onCheckedChange = { onToggle(service) }) }
-                }
-            }
-        }
-    }
-    if (showAdd) NewServiceDialog({ showAdd = false }) { onAdd(it); showAdd = false }
-}
-
-@Composable
-fun NewServiceDialog(onDismiss: () -> Unit, onSave: (ServiceItem) -> Unit) {
-    var name by remember { mutableStateOf("") }; var price by remember { mutableStateOf("") }; var duration by remember { mutableStateOf("30") }; var commission by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Nuevo servicio") }, text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedTextField(name, { name = it }, label = { Text("Nombre") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        MoneyField("Precio", price) { price = it }
-        OutlinedTextField(duration, { duration = it.filter(Char::isDigit) }, label = { Text("Duración en minutos") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(commission, { commission = it.filter(Char::isDigit).take(3) }, label = { Text("Comisión especial % (opcional)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
-        Text("Si la dejas vacía se usa el % configurado en el barbero.", color = Gris, fontSize = 11.sp)
-    } }, confirmButton = { Button(onClick = { if (name.isNotBlank() && (price.toIntOrNull() ?: 0) > 0) onSave(ServiceItem(System.currentTimeMillis(), name.trim(), price.toIntOrNull() ?: 0, duration.toIntOrNull() ?: 30, true, commission.toIntOrNull()?.coerceIn(0,100) ?: -1)) }, colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)) { Text("Guardar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } })
-}
-
-@Composable
-fun CommissionsScreen(sales: List<SaleItem>, barbers: List<BarberItem>, services: List<ServiceItem>, onBack: () -> Unit) {
-    var filter by remember { mutableStateOf("Hoy") }
-    val filtered = sales.filter { when (filter) { "Hoy" -> it.date == today(); "7 días" -> isWithinDays(it.date, 7); "Mes" -> isInCurrentMonth(it.date); else -> true } }
-    val rows = filtered.groupBy { it.barber }.map { (barberName, list) ->
-        val amount = list.sumOf { sale -> if (sale.commissionAmount > 0) sale.commissionAmount else commissionAmount(max(0, (if (sale.serviceBase > 0) sale.serviceBase else sale.amount) - sale.discount), services.firstOrNull { it.name == sale.service }, barbers.firstOrNull { it.name == sale.barber }) }
-        Triple(barberName, list.sumOf { it.amount }, amount)
-    }.sortedByDescending { it.third }
-    val totalCommission = rows.sumOf { it.third }
-
-    Column(Modifier.fillMaxSize().background(Fondo)) {
-        BackHeader("Comisiones", onBack)
-        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Hoy", "7 días", "Mes", "Todas").forEach { item -> FilterChip(selected = filter == item, onClick = { filter = item }, label = { Text(item) }) } }
-                Spacer(Modifier.height(12.dp)); Text("A pagar: ${money(totalCommission)}", color = Dorado, fontSize = 28.sp, fontWeight = FontWeight.Black)
-                Text("Se calcula sobre el valor del servicio menos descuento. Extras/productos y propina no generan comisión.", color = Gris, fontSize = 11.sp)
-            }
-            if (rows.isEmpty()) item { EmptyCard("No hay ventas con comisión en este período.") }
-            items(rows) { row ->
-                Surface(color = Tarjeta, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.ContentCut, null, tint = Dorado); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(row.first, color = Color.White, fontWeight = FontWeight.Bold); Text("Ventas: ${money(row.second)}", color = Gris, fontSize = 12.sp) }; Text(money(row.third), color = Dorado, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun QrScreen(
-    shopName: String,
-    bookingLink: String,
-    services: List<ServiceItem>,
-    barbers: List<BarberItem>,
-    appointments: List<Appointment>,
-    blocks: List<ScheduleBlock>,
-    onBack: () -> Unit,
-    onSaveLink: (String) -> Unit,
-    onOnlineBooking: (Appointment) -> Unit
-) {
-    val context = LocalContext.current
-    var link by remember(bookingLink) { mutableStateOf(bookingLink) }
-    var showBooking by remember { mutableStateOf(false) }
-    val qr = remember(link) { generateQrBitmap(link) }
-    Column(Modifier.fillMaxSize().background(Fondo)) {
-        BackHeader("QR Reservas", onBack)
-        Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
-            Surface(color = Color.White, shape = RoundedCornerShape(24.dp)) {
-                if (qr != null) Image(bitmap = qr.asImageBitmap(), contentDescription = "QR de reservas", modifier = Modifier.padding(18.dp).size(210.dp))
-                else Icon(Icons.Default.QrCode2, null, tint = Color.Black, modifier = Modifier.padding(34.dp).size(150.dp))
-            }
-            Spacer(Modifier.height(16.dp))
-            Text(shopName, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(link, { link = it }, label = { Text("Enlace público de reservas") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-            Spacer(Modifier.height(10.dp))
-            Button(onClick = { onSaveLink(link.trim()) }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)) { Text("Guardar enlace y actualizar QR") }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { shareText(context, "Reserva tu hora en $shopName: $link") }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Share, null); Spacer(Modifier.width(8.dp)); Text("Compartir por WhatsApp / redes") }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { showBooking = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.EventAvailable, null); Spacer(Modifier.width(8.dp)); Text("Probar flujo de reserva del cliente") }
-            Spacer(Modifier.height(18.dp))
-            Surface(color = Dorado.copy(alpha = 0.10f), shape = RoundedCornerShape(16.dp)) {
-                Text("El QR ya es real y apunta al enlace configurado. Para que una reserva hecha desde otro teléfono aparezca automáticamente en esta agenda, el enlace debe estar conectado al backend/web de la barbería. El flujo de cliente queda preparado en esta versión.", color = Gris, fontSize = 12.sp, modifier = Modifier.padding(14.dp))
-            }
-        }
-    }
-    if (showBooking) {
-        NewAppointmentDialog(emptyList(), services, barbers, appointments, blocks, null, "Online", { showBooking = false }) { onOnlineBooking(it); showBooking = false }
-    }
-}
-
-@Composable
-fun SettingsScreen(shopName: String, shopPhone: String, onBack: () -> Unit, onSave: (String, String) -> Unit) {
-    var name by remember(shopName) { mutableStateOf(shopName) }; var phone by remember(shopPhone) { mutableStateOf(shopPhone) }; var saved by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().background(Fondo)) {
-        BackHeader("Configuración", onBack)
-        Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(name, { name = it }, label = { Text("Nombre de la barbería") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(phone, { phone = it }, label = { Text("WhatsApp") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), singleLine = true, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { if (name.isNotBlank()) { onSave(name.trim(), phone.trim()); saved = true } }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Dorado, contentColor = Color.Black)) { Text("Guardar cambios") }
-            if (saved) Text("Cambios guardados ✓", color = Verde, fontSize = 13.sp)
-            Surface(color = Tarjeta, shape = RoundedCornerShape(16.dp)) { Column(Modifier.padding(16.dp)) { Text("Versión 3", color = Dorado, fontWeight = FontWeight.Bold); Text("Agenda profesional, QR/enlace, recordatorios locales, caja avanzada y comisiones.", color = Gris, fontSize = 12.sp) } }
-        }
-    }
-}
-
-@Composable
-fun SelectField(label: String, value: String, options: List<String>, onSelect: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    Column {
-        Text(label, color = Gris, fontSize = 12.sp); Spacer(Modifier.height(4.dp))
-        Box {
-            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) { Text(value.ifBlank { "Seleccionar" }, modifier = Modifier.weight(1f), color = Color.White); Icon(Icons.Default.ArrowDropDown, null) }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { onSelect(option); expanded = false }) }
-                if (options.isEmpty()) DropdownMenuItem(text = { Text("Sin opciones") }, onClick = { expanded = false })
-            }
-        }
-    }
-}
-
-@Composable
-fun SectionHeader(title: String, subtitle: String) {
-    Column(Modifier.fillMaxWidth().background(Fondo).padding(horizontal = 18.dp, vertical = 14.dp)) { Text(title, color = Color.White, fontSize = 27.sp, fontWeight = FontWeight.Bold); Text(subtitle, color = Gris, fontSize = 12.sp) }
-}
-
-@Composable
-fun BackHeader(title: String, onBack: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().background(Fondo).padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = Dorado) }; Text(title, color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold) }
-}
-
-private fun today(): String = SimpleDateFormat(DATE_PATTERN, Locale.getDefault()).format(Date())
-private fun nowTime(): String = SimpleDateFormat(TIME_PATTERN, Locale.getDefault()).format(Date())
-private fun parseDate(value: String): Date? = runCatching { SimpleDateFormat(DATE_PATTERN, Locale.getDefault()).apply { isLenient = false }.parse(value) }.getOrNull()
-private fun parseDateTime(date: String, time: String): Date? = runCatching { SimpleDateFormat("$DATE_PATTERN $TIME_PATTERN", Locale.getDefault()).apply { isLenient = false }.parse("$date $time") }.getOrNull()
-
-private fun isWithinDays(date: String, days: Int): Boolean {
-    val d = parseDate(date)?.time ?: return false
-    val start = parseDate(today())?.time ?: return false
-    return d in start..(start + days * 24L * 60L * 60L * 1000L)
-}
-
-private fun isInCurrentMonth(date: String): Boolean {
-    val d = parseDate(date) ?: return false
-    val a = Calendar.getInstance().apply { time = d }
-    val b = Calendar.getInstance()
-    return a.get(Calendar.YEAR) == b.get(Calendar.YEAR) && a.get(Calendar.MONTH) == b.get(Calendar.MONTH)
-}
-
-private fun toMinutes(value: String): Int? {
-    val parts = value.split(":")
-    if (parts.size != 2) return null
-    val h = parts[0].toIntOrNull() ?: return null
-    val m = parts[1].toIntOrNull() ?: return null
-    if (h !in 0..23 || m !in 0..59) return null
-    return h * 60 + m
-}
-
-private fun appointmentHasConflict(candidate: Appointment, appointments: List<Appointment>, blocks: List<ScheduleBlock>, ignoreId: Long?): Boolean {
-    val start = toMinutes(candidate.time) ?: return true
-    val end = start + candidate.duration
-    val apptConflict = appointments.any {
-        it.id != ignoreId && it.barber == candidate.barber && it.date == candidate.date && it.status !in listOf("Cancelada") && run {
-            val otherStart = toMinutes(it.time) ?: return@run false
-            val otherEnd = otherStart + it.duration
-            start < otherEnd && end > otherStart
-        }
-    }
-    if (apptConflict) return true
-    return blocks.any {
-        it.barber == candidate.barber && it.date == candidate.date && run {
-            val blockStart = toMinutes(it.start) ?: return@run false
-            val blockEnd = toMinutes(it.end) ?: return@run false
-            start < blockEnd && end > blockStart
-        }
-    }
-}
-
-private fun commissionAmount(base: Int, service: ServiceItem?, barber: BarberItem?): Int {
-    val percent = when {
-        service != null && service.commissionOverride >= 0 -> service.commissionOverride
-        barber != null -> barber.commission
-        else -> 0
-    }
-    return base * percent / 100
-}
-
-private fun money(value: Int): String {
-    val nf = NumberFormat.getIntegerInstance(Locale("es", "CL"))
-    return "$${nf.format(value)}"
-}
-
-private fun shareText(context: Context, text: String) {
-    runCatching {
-        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, text) }, "Compartir"))
-    }
-}
-
-private fun openWhatsAppReminder(context: Context, appointment: Appointment, shopName: String) {
-    val digits = appointment.phone.filter(Char::isDigit)
-    if (digits.isBlank()) return
-    val phone = if (digits.startsWith("56")) digits else if (digits.startsWith("9")) "56$digits" else digits
-    val message = Uri.encode("Hola ${appointment.client}, te recordamos tu hora en $shopName el ${appointment.date} a las ${appointment.time} para ${appointment.service}. ¡Te esperamos!")
-    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$phone?text=$message"))) }
-}
-
-private fun generateQrBitmap(text: String, size: Int = 700): Bitmap? {
-    if (text.isBlank()) return null
-    return runCatching {
-        val matrix = MultiFormatWriter().encode(text, BarcodeFormat.QR_CODE, size, size)
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
-        for (x in 0 until size) for (y in 0 until size) bitmap.setPixel(x, y, if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
-        bitmap
-    }.getOrNull()
-}
-
-object LocalStore {
-    private const val PREF = "barberia_v2"
-    private const val APPOINTMENTS = "appointments"
-    private const val CLIENTS = "clients"
-    private const val BARBERS = "barbers"
-    private const val SERVICES = "services"
-    private const val SALES = "sales"
-    private const val BLOCKS = "blocks"
-    private const val CASH_CLOSES = "cash_closes"
-    private const val PRODUCTS = "products"
-    private const val SHOP_NAME = "shop_name"
-    private const val SHOP_PHONE = "shop_phone"
-    private const val BOOKING_LINK = "booking_link"
-    private const val LOYALTY_EVERY = "loyalty_every"
-    private const val LOYALTY_REWARD = "loyalty_reward"
-    private const val CLOUD_TOKEN = "cloud_token"
-    private const val CLOUD_EMAIL = "cloud_email"
-    private const val CLOUD_USER = "cloud_user"
-    private const val CLOUD_BARBERIA_ID = "cloud_barberia_id"
-
-    private fun prefs(context: Context) = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-
-    fun getCloudToken(context: Context): String = prefs(context).getString(CLOUD_TOKEN, "") ?: ""
-    fun getCloudEmail(context: Context): String = prefs(context).getString(CLOUD_EMAIL, "") ?: ""
-    fun saveCloudSession(context: Context, session: CloudSession) {
-        prefs(context).edit()
-            .putString(CLOUD_TOKEN, session.token)
-            .putString(CLOUD_EMAIL, session.userEmail)
-            .putString(CLOUD_USER, session.userName)
-            .putLong(CLOUD_BARBERIA_ID, session.barberiaId)
-            .apply()
-    }
-    fun clearCloudSession(context: Context) {
-        prefs(context).edit()
-            .remove(CLOUD_TOKEN)
-            .remove(CLOUD_EMAIL)
-            .remove(CLOUD_USER)
-            .remove(CLOUD_BARBERIA_ID)
-            .apply()
-    }
-
-    fun getShopName(context: Context): String = prefs(context).getString(SHOP_NAME, "Barbería Central") ?: "Barbería Central"
-    fun setShopName(context: Context, value: String) = prefs(context).edit().putString(SHOP_NAME, value).apply()
-    fun getShopPhone(context: Context): String = prefs(context).getString(SHOP_PHONE, "") ?: ""
-    fun setShopPhone(context: Context, value: String) = prefs(context).edit().putString(SHOP_PHONE, value).apply()
-    fun getBookingLink(context: Context): String = prefs(context).getString(BOOKING_LINK, "https://barberia.negociospyme.cl/reservar") ?: "https://barberia.negociospyme.cl/reservar"
-    fun setBookingLink(context: Context, value: String) = prefs(context).edit().putString(BOOKING_LINK, value).apply()
-    fun getLoyaltyEvery(context: Context): Int = prefs(context).getInt(LOYALTY_EVERY, 10).coerceAtLeast(1)
-    fun setLoyaltyEvery(context: Context, value: Int) = prefs(context).edit().putInt(LOYALTY_EVERY, value.coerceAtLeast(1)).apply()
-    fun getLoyaltyReward(context: Context): String = prefs(context).getString(LOYALTY_REWARD, "Corte gratis") ?: "Corte gratis"
-    fun setLoyaltyReward(context: Context, value: String) = prefs(context).edit().putString(LOYALTY_REWARD, value).apply()
-
-    fun loadAppointments(context: Context): List<Appointment> {
-        val raw = prefs(context).getString(APPOINTMENTS, null)
-        if (raw.isNullOrBlank()) return listOf(
-            Appointment(1, "Carlos González", "+56911111111", "Corte + barba", "Diego", today(), "13:30", "Confirmada", 18000, 50, "Manual"),
-            Appointment(2, "Martín Pérez", "+56922222222", "Corte clásico", "Sebastián", today(), "15:00", "Pendiente", 12000, 30, "Online")
-        )
-        return runCatching {
-            val arr = JSONArray(raw); buildList { for (i in 0 until arr.length()) { val o = arr.getJSONObject(i); add(Appointment(o.optLong("id"), o.optString("client"), o.optString("phone"), o.optString("service"), o.optString("barber"), o.optString("date"), o.optString("time"), o.optString("status", "Pendiente"), o.optInt("price"), o.optInt("duration", 30), o.optString("source", "Manual"))) } }
-        }.getOrDefault(emptyList())
-    }
-
-    fun saveAppointments(context: Context, list: List<Appointment>) {
-        val arr = JSONArray(); list.forEach { arr.put(JSONObject().apply { put("id", it.id); put("client", it.client); put("phone", it.phone); put("service", it.service); put("barber", it.barber); put("date", it.date); put("time", it.time); put("status", it.status); put("price", it.price); put("duration", it.duration); put("source", it.source) }) }; prefs(context).edit().putString(APPOINTMENTS, arr.toString()).apply()
-    }
-
-    fun loadClients(context: Context): List<ClientItem> {
-        val raw = prefs(context).getString(CLIENTS, null)
-        if (raw.isNullOrBlank()) return listOf(ClientItem(1, "Carlos González", "+56911111111", 8, 112000, "Cliente frecuente"), ClientItem(2, "Martín Pérez", "+56922222222", 5, 68000, ""))
-        return runCatching { val arr = JSONArray(raw); buildList { for (i in 0 until arr.length()) { val o = arr.getJSONObject(i); add(ClientItem(o.optLong("id"), o.optString("name"), o.optString("phone"), o.optInt("visits"), o.optInt("spent"), o.optString("notes"), o.optInt("rewardsRedeemed", 0))) } } }.getOrDefault(emptyList())
-    }
-
-    fun saveClients(context: Context, list: List<ClientItem>) {
-        val arr = JSONArray(); list.forEach { arr.put(JSONObject().apply { put("id", it.id); put("name", it.name); put("phone", it.phone); put("visits", it.visits); put("spent", it.spent); put("notes", it.notes); put("rewardsRedeemed", it.rewardsRedeemed) }) }; prefs(context).edit().putString(CLIENTS, arr.toString()).apply()
-    }
-
-    fun loadBarbers(context: Context): List<BarberItem> {
-        val raw = prefs(context).getString(BARBERS, null)
-        if (raw.isNullOrBlank()) return listOf(BarberItem(1, "Diego", 40, true), BarberItem(2, "Sebastián", 40, true), BarberItem(3, "Andrés", 45, true))
-        return runCatching { val arr = JSONArray(raw); buildList { for (i in 0 until arr.length()) { val o = arr.getJSONObject(i); add(BarberItem(o.optLong("id"), o.optString("name"), o.optInt("commission"), o.optBoolean("active", true))) } } }.getOrDefault(emptyList())
-    }
-
-    fun saveBarbers(context: Context, list: List<BarberItem>) {
-        val arr = JSONArray(); list.forEach { arr.put(JSONObject().apply { put("id", it.id); put("name", it.name); put("commission", it.commission); put("active", it.active) }) }; prefs(context).edit().putString(BARBERS, arr.toString()).apply()
-    }
-
-    fun loadServices(context: Context): List<ServiceItem> {
-        val raw = prefs(context).getString(SERVICES, null)
-        if (raw.isNullOrBlank()) return listOf(
-            ServiceItem(1, "Corte clásico", 12000, 30, true), ServiceItem(2, "Degradado", 14000, 45, true), ServiceItem(3, "Barba", 8000, 20, true), ServiceItem(4, "Corte + barba", 18000, 50, true, 45)
-        )
-        return runCatching { val arr = JSONArray(raw); buildList { for (i in 0 until arr.length()) { val o = arr.getJSONObject(i); add(ServiceItem(o.optLong("id"), o.optString("name"), o.optInt("price"), o.optInt("duration"), o.optBoolean("active", true), if (o.has("commissionOverride")) o.optInt("commissionOverride", -1) else -1)) } } }.getOrDefault(emptyList())
-    }
-
-    fun saveServices(context: Context, list: List<ServiceItem>) {
-        val arr = JSONArray(); list.forEach { arr.put(JSONObject().apply { put("id", it.id); put("name", it.name); put("price", it.price); put("duration", it.duration); put("active", it.active); put("commissionOverride", it.commissionOverride) }) }; prefs(context).edit().putString(SERVICES, arr.toString()).apply()
-    }
-
-    fun loadSales(context: Context): List<SaleItem> {
-        val raw = prefs(context).getString(SALES, null) ?: return emptyList()
-        return runCatching { val arr = JSONArray(raw); buildList { for (i in 0 until arr.length()) { val o = arr.getJSONObject(i); add(SaleItem(o.optLong("id"), o.optString("client"), o.optString("service"), o.optString("barber"), o.optInt("amount"), o.optString("payment"), o.optString("date"), o.optString("time", ""), o.optInt("serviceBase", o.optInt("amount")), o.optInt("extra"), o.optInt("discount"), o.optInt("tip"), o.optInt("commissionAmount"))) } } }.getOrDefault(emptyList())
-    }
-
-    fun saveSales(context: Context, list: List<SaleItem>) {
-        val arr = JSONArray(); list.forEach { arr.put(JSONObject().apply { put("id", it.id); put("client", it.client); put("service", it.service); put("barber", it.barber); put("amount", it.amount); put("payment", it.payment); put("date", it.date); put("time", it.time); put("serviceBase", it.serviceBase); put("extra", it.extra); put("discount", it.discount); put("tip", it.tip); put("commissionAmount", it.commissionAmount) }) }; prefs(context).edit().putString(SALES, arr.toString()).apply()
-    }
-
-    fun loadBlocks(context: Context): List<ScheduleBlock> {
-        val raw = prefs(context).getString(BLOCKS, null) ?: return emptyList()
-        return runCatching { val arr = JSONArray(raw); buildList { for (i in 0 until arr.length()) { val o = arr.getJSONObject(i); add(ScheduleBlock(o.optLong("id"), o.optString("barber"), o.optString("date"), o.optString("start"), o.optString("end"), o.optString("reason"))) } } }.getOrDefault(emptyList())
-    }
-
-    fun saveBlocks(context: Context, list: List<ScheduleBlock>) {
-        val arr = JSONArray(); list.forEach { arr.put(JSONObject().apply { put("id", it.id); put("barber", it.barber); put("date", it.date); put("start", it.start); put("end", it.end); put("reason", it.reason) }) }; prefs(context).edit().putString(BLOCKS, arr.toString()).apply()
-    }
-
-    fun loadCashCloses(context: Context): List<CashClose> {
-        val raw = prefs(context).getString(CASH_CLOSES, null) ?: return emptyList()
-        return runCatching { val arr = JSONArray(raw); buildList { for (i in 0 until arr.length()) { val o = arr.getJSONObject(i); add(CashClose(o.optLong("id"), o.optString("date"), o.optString("time"), o.optInt("total"), o.optInt("cash"), o.optInt("transfer"), o.optInt("card"), o.optString("note"))) } } }.getOrDefault(emptyList())
-    }
-
-    fun saveCashCloses(context: Context, list: List<CashClose>) {
-        val arr = JSONArray(); list.forEach { arr.put(JSONObject().apply { put("id", it.id); put("date", it.date); put("time", it.time); put("total", it.total); put("cash", it.cash); put("transfer", it.transfer); put("card", it.card); put("note", it.note) }) }; prefs(context).edit().putString(CASH_CLOSES, arr.toString()).apply()
-    }
-
-    fun loadProducts(context: Context): List<ProductItem> {
-        val raw = prefs(context).getString(PRODUCTS, null)
-        if (raw.isNullOrBlank()) return listOf(
-            ProductItem(1, "Cera matte", 7000, 8, 3, true),
-            ProductItem(2, "Aceite para barba", 9000, 4, 2, true),
-            ProductItem(3, "Shampoo barber", 8500, 2, 2, true)
-        )
-        return runCatching {
-            val arr = JSONArray(raw)
-            buildList {
-                for (i in 0 until arr.length()) {
-                    val o = arr.getJSONObject(i)
-                    add(
-                        ProductItem(
-                            id = o.optLong("id"),
-                            name = o.optString("name"),
-                            price = o.optInt("price"),
-                            stock = o.optInt("stock"),
-                            minStock = o.optInt("minStock", 0),
-                            active = o.optBoolean("active", true)
-                        )
-                    )
-                }
-            }
-        }.getOrDefault(emptyList())
-    }
-
-    fun saveProducts(context: Context, list: List<ProductItem>) {
-        val arr = JSONArray()
-        list.forEach {
-            arr.put(
-                JSONObject().apply {
-                    put("id", it.id)
-                    put("name", it.name)
-                    put("price", it.price)
-                    put("stock", it.stock)
-                    put("minStock", it.minStock)
-                    put("active", it.active)
-                }
-            )
-        }
-        prefs(context).edit().putString(PRODUCTS, arr.toString()).apply()
-    }
-}
+@Composable fun BackTitle(t:String,onBack:()->Unit){Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onBack){Icon(Icons.Default.ArrowBack,null)};Text(t,fontSize=25.sp,fontWeight=FontWeight.Bold)}}
