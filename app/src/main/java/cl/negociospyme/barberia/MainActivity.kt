@@ -61,6 +61,10 @@ data class Product(val id:Long,val name:String,val price:Double,val stock:Int,va
 data class Appointment(val id:Long,val client:String,val phone:String,val start:String,val status:String,val barberId:Long,val barber:String,val serviceId:Long,val service:String,val price:Double)
 data class Sale(val id:Long,val total:Double,val commission:Double,val payment:String,val created:String,val detail:String,val client:String,val barber:String)
 data class Dashboard(val appointments:Int,val sales:Double,val barbers:Int,val lowStock:Int,val plan:String,val status:String,val next:List<String>)
+data class WorkDay(val day:Int,val start:String,val end:String,val active:Boolean)
+data class TimeBlock(val id:Long,val barberId:Long,val date:String,val start:String,val end:String,val type:String,val reason:String)
+data class AppNotice(val id:Long,val title:String,val message:String,val read:Boolean,val created:String)
+
 
 class MainActivity: ComponentActivity(){
     override fun onCreate(savedInstanceState: Bundle?){
@@ -199,6 +203,8 @@ fun CloudShell(s:Session,onLogout:()->Unit){
                 "inventario"->ProductsScreen(s){screen="mas"}
                 "reportes"->ReportsScreen(s){screen="mas"}
                 "qr"->QrScreen(s){screen="mas"}
+                "horarios"->ScheduleScreen(s){screen="mas"}
+                "avisos"->NotificationsScreen(s){screen="mas"}
             }
         }
     }
@@ -235,6 +241,8 @@ fun HomeScreen(s:Session,navigate:(String)->Unit,onLogout:()->Unit){
         item{MenuCard("Barberos","Equipo y comisiones",Icons.Default.ContentCut){navigate("barberos")}}
         item{MenuCard("Servicios","Precios, duración y comisión",Icons.Default.Build){navigate("servicios")}}
         item{MenuCard("Inventario","Productos y stock",Icons.Default.Inventory2){navigate("inventario")}}
+        item{MenuCard("Horarios","Disponibilidad real por barbero",Icons.Default.Schedule){navigate("horarios")}}
+        item{MenuCard("Avisos","Reservas y recordatorios",Icons.Default.Notifications){navigate("avisos")}}
         item{MenuCard("Reportes","Ventas y comisiones",Icons.Default.BarChart){navigate("reportes")}}
         item{MenuCard("QR reservas","Link público para clientes",Icons.Default.QrCode2){navigate("qr")}}
         item{OutlinedButton(onClick=onLogout,modifier=Modifier.fillMaxWidth()){Text("Cerrar sesión")}}
@@ -279,6 +287,7 @@ fun AgendaScreen(s:Session){
                             if(a.status!="confirmada"&&a.status!="atendida"&&a.status!="cancelada") SmallAction("Confirmar"){scope.launch{runCatching{Api.post("/api/appointments.php",s.token,JSONObject().put("action","status").put("id",a.id).put("estado","confirmada"))}.onSuccess{load()}}}
                             if(a.status!="atendida"&&a.status!="cancelada") SmallAction("Atendida"){scope.launch{runCatching{Api.post("/api/appointments.php",s.token,JSONObject().put("action","status").put("id",a.id).put("estado","atendida"))}.onSuccess{load()}}}
                             if(a.status!="cancelada"&&a.status!="atendida") SmallAction("Cancelar"){scope.launch{runCatching{Api.post("/api/appointments.php",s.token,JSONObject().put("action","status").put("id",a.id).put("estado","cancelada"))}.onSuccess{load()}}}
+                            if(a.phone.isNotBlank()) WhatsAppAction(a.phone,"Hola ${a.client}, te recordamos tu cita en ${s.shopName}: ${a.service} con ${a.barber}, ${a.start}.")
                         }
                     }
                 }
@@ -292,6 +301,18 @@ fun AgendaScreen(s:Session){
 }
 
 @Composable fun SmallAction(t:String,onClick:()->Unit){TextButton(onClick=onClick,contentPadding=PaddingValues(horizontal=7.dp)){Text(t,fontSize=12.sp)}}
+@Composable
+fun WhatsAppAction(phone:String,message:String){
+    val ctx=LocalContext.current
+    TextButton(onClick={
+        val digits=phone.filter{it.isDigit()}
+        if(digits.isNotBlank()){
+            val url="https://wa.me/$digits?text="+Uri.encode(message)
+            ctx.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(url)))
+        }
+    },contentPadding=PaddingValues(horizontal=7.dp)){Text("WhatsApp",fontSize=12.sp)}
+}
+
 
 @Composable
 fun AppointmentDialog(defaultDate:String,barbers:List<Barber>,services:List<Service>,onDismiss:()->Unit,onSave:(String,String,Long,Long,String,String)->Unit){
@@ -454,12 +475,195 @@ fun MoreScreen(s:Session,navigate:(String)->Unit,onLogout:()->Unit){
         item{MenuCard("Barberos","Equipo y comisiones",Icons.Default.ContentCut){navigate("barberos")}}
         item{MenuCard("Servicios","Precios y duración",Icons.Default.Build){navigate("servicios")}}
         item{MenuCard("Inventario","Stock y productos",Icons.Default.Inventory2){navigate("inventario")}}
+        item{MenuCard("Horarios","Turnos, días libres y bloqueos",Icons.Default.Schedule){navigate("horarios")}}
+        item{MenuCard("Avisos","Nuevas reservas y recordatorios",Icons.Default.Notifications){navigate("avisos")}}
         item{MenuCard("Reportes","Ventas y comisiones",Icons.Default.BarChart){navigate("reportes")}}
         item{MenuCard("QR reservas","Página pública",Icons.Default.QrCode2){navigate("qr")}}
         item{Text("${s.userName} · ${s.email}",color=Gris)}
         item{OutlinedButton(onClick=onLogout,modifier=Modifier.fillMaxWidth()){Text("Cerrar sesión")}}
     }
 }
+
+
+private val dayNames=listOf("Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo")
+
+@Composable
+fun ScheduleScreen(s:Session,onBack:()->Unit){
+    var barbers by remember{mutableStateOf<List<Barber>>(emptyList())}
+    var selected by remember{mutableStateOf<Barber?>(null)}
+    var days by remember{mutableStateOf<List<WorkDay>>(emptyList())}
+    var blocks by remember{mutableStateOf<List<TimeBlock>>(emptyList())}
+    var error by remember{mutableStateOf("")}
+    var showBlock by remember{mutableStateOf(false)}
+    val scope=rememberCoroutineScope()
+
+    fun loadBarbers(){
+        scope.launch{
+            runCatching{
+                val a=Api.get("/api/barbers.php",s.token).getJSONArray("items")
+                List(a.length()){i->val o=a.getJSONObject(i);Barber(o.long("id"),o.str("nombre"),o.str("telefono"),o.dbl("comision_pct"),o.bool("activo"))}.filter{it.active}
+            }.onSuccess{
+                barbers=it
+                if(selected==null) selected=it.firstOrNull()
+            }.onFailure{error=it.message?:"Error"}
+        }
+    }
+
+    fun loadSchedule(){
+        val b=selected ?: return
+        scope.launch{
+            runCatching{
+                val a=Api.get("/api/schedule.php?barbero_id=${b.id}",s.token).getJSONArray("items")
+                val ds=List(a.length()){i->val o=a.getJSONObject(i);WorkDay(o.int("dia_semana"),o.str("hora_inicio"),o.str("hora_fin"),o.bool("activo"))}
+                val x=Api.get("/api/blocks.php?barbero_id=${b.id}&from=${today()}&to=2099-12-31",s.token).getJSONArray("items")
+                val bs=List(x.length()){i->val o=x.getJSONObject(i);TimeBlock(o.long("id"),o.long("barbero_id"),o.str("fecha"),o.str("hora_inicio").take(5),o.str("hora_fin").take(5),o.str("tipo"),o.str("motivo"))}
+                Pair(ds,bs)
+            }.onSuccess{days=it.first;blocks=it.second;error=""}.onFailure{error=it.message?:"Error"}
+        }
+    }
+
+    LaunchedEffect(Unit){loadBarbers()}
+    LaunchedEffect(selected?.id){if(selected!=null)loadSchedule()}
+
+    Column(Modifier.fillMaxSize().background(Fondo).padding(16.dp)){
+        BackTitle("Horarios",onBack)
+        if(error.isNotBlank()) ErrorBox(error)
+
+        Picker("Barbero",selected?.name?:"Sin barberos",barbers.map{it.name}){n->selected=barbers.firstOrNull{it.name==n}}
+        Spacer(Modifier.height(8.dp))
+
+        LazyColumn(verticalArrangement=Arrangement.spacedBy(7.dp),modifier=Modifier.weight(1f)){
+            items(days){d->
+                var active by remember(d){mutableStateOf(d.active)}
+                var start by remember(d){mutableStateOf(d.start)}
+                var end by remember(d){mutableStateOf(d.end)}
+                Surface(color=Tarjeta,shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth()){
+                    Column(Modifier.padding(12.dp)){
+                        Row(verticalAlignment=Alignment.CenterVertically){
+                            Text(dayNames.getOrElse(d.day-1){"Día"},fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
+                            Switch(active,{v->
+                                active=v
+                                days=days.map{if(it.day==d.day)it.copy(active=v) else it}
+                            })
+                        }
+                        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                            OutlinedTextField(start,{v->start=v;days=days.map{if(it.day==d.day)it.copy(start=v) else it}},label={Text("Inicio")},modifier=Modifier.weight(1f),singleLine=true)
+                            OutlinedTextField(end,{v->end=v;days=days.map{if(it.day==d.day)it.copy(end=v) else it}},label={Text("Término")},modifier=Modifier.weight(1f),singleLine=true)
+                        }
+                    }
+                }
+            }
+
+            item{SectionTitle("Bloqueos / días libres")}
+            items(blocks){b->
+                Surface(color=Tarjeta,shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth()){
+                    Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically){
+                        Column(Modifier.weight(1f)){
+                            Text("${b.date} · ${if(b.type=="dia_libre")"Día libre" else "${b.start}-${b.end}"}",fontWeight=FontWeight.Bold)
+                            if(b.reason.isNotBlank()) Text(b.reason,color=Gris)
+                        }
+                        IconButton(onClick={
+                            scope.launch{runCatching{Api.post("/api/blocks.php",s.token,JSONObject().put("action","delete").put("id",b.id))}.onSuccess{loadSchedule()}}
+                        }){Icon(Icons.Default.Delete,null,tint=Rojo)}
+                    }
+                }
+            }
+        }
+
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            OutlinedButton(onClick={showBlock=true},modifier=Modifier.weight(1f),enabled=selected!=null){Text("Bloquear hora")}
+            Button(onClick={
+                val b=selected ?: return@Button
+                val arr=JSONArray()
+                days.forEach{arr.put(JSONObject().put("dia_semana",it.day).put("hora_inicio",it.start).put("hora_fin",it.end).put("activo",it.active))}
+                scope.launch{runCatching{Api.post("/api/schedule.php",s.token,JSONObject().put("barbero_id",b.id).put("items",arr))}.onSuccess{loadSchedule()}.onFailure{error=it.message?:"Error"}}
+            },modifier=Modifier.weight(1f),enabled=selected!=null){Text("Guardar")}
+        }
+    }
+
+    if(showBlock && selected!=null) BlockDialog({showBlock=false}){date,start,end,dayOff,reason->
+        scope.launch{
+            runCatching{
+                Api.post("/api/blocks.php",s.token,JSONObject()
+                    .put("barbero_id",selected!!.id)
+                    .put("fecha",date)
+                    .put("tipo",if(dayOff)"dia_libre" else "bloqueo")
+                    .put("hora_inicio",start)
+                    .put("hora_fin",end)
+                    .put("motivo",reason))
+            }.onSuccess{showBlock=false;loadSchedule()}.onFailure{error=it.message?:"Error"}
+        }
+    }
+}
+
+@Composable
+fun BlockDialog(dismiss:()->Unit,save:(String,String,String,Boolean,String)->Unit){
+    var date by remember{mutableStateOf(today())}
+    var start by remember{mutableStateOf("13:00")}
+    var end by remember{mutableStateOf("14:00")}
+    var dayOff by remember{mutableStateOf(false)}
+    var reason by remember{mutableStateOf("")}
+    AlertDialog(
+        onDismissRequest=dismiss,
+        title={Text("Bloqueo de agenda")},
+        text={Column{
+            OutlinedTextField(date,{date=it},label={Text("Fecha yyyy-MM-dd")},modifier=Modifier.fillMaxWidth())
+            Row(verticalAlignment=Alignment.CenterVertically){Switch(dayOff,{dayOff=it});Text(" Día libre completo")}
+            if(!dayOff){
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                    OutlinedTextField(start,{start=it},label={Text("Inicio")},modifier=Modifier.weight(1f))
+                    OutlinedTextField(end,{end=it},label={Text("Término")},modifier=Modifier.weight(1f))
+                }
+            }
+            OutlinedTextField(reason,{reason=it},label={Text("Motivo")},modifier=Modifier.fillMaxWidth())
+        }},
+        confirmButton={Button(onClick={save(date,start,end,dayOff,reason)}){Text("Guardar")}},
+        dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}}
+    )
+}
+
+@Composable
+fun NotificationsScreen(s:Session,onBack:()->Unit){
+    var list by remember{mutableStateOf<List<AppNotice>>(emptyList())}
+    var error by remember{mutableStateOf("")}
+    val scope=rememberCoroutineScope()
+
+    fun load(){
+        scope.launch{
+            runCatching{
+                val a=Api.get("/api/notifications.php",s.token).getJSONArray("items")
+                List(a.length()){i->val o=a.getJSONObject(i);AppNotice(o.long("id"),o.str("titulo"),o.str("mensaje"),!o.isNull("leida_en") && o.str("leida_en").isNotBlank(),o.str("creado_en"))}
+            }.onSuccess{list=it;error=""}.onFailure{error=it.message?:"Error"}
+        }
+    }
+    LaunchedEffect(Unit){load()}
+
+    Column(Modifier.fillMaxSize().background(Fondo).padding(16.dp)){
+        Row(verticalAlignment=Alignment.CenterVertically){
+            IconButton(onClick=onBack){Icon(Icons.Default.ArrowBack,null)}
+            Text("Avisos",fontSize=25.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f))
+            TextButton(onClick={scope.launch{runCatching{Api.post("/api/notifications.php",s.token,JSONObject().put("action","read_all"))}.onSuccess{load()}}}){Text("Leer todo")}
+        }
+        Text("Nuevas reservas y recordatorios de 24 h / 1 h",color=Gris,fontSize=13.sp)
+        if(error.isNotBlank()) ErrorBox(error)
+        Spacer(Modifier.height(8.dp))
+        LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
+            if(list.isEmpty()) item{Text("Sin avisos",color=Gris)}
+            items(list){n->
+                Surface(color=if(n.read)Tarjeta else Color(0xFF2D2A1D),shape=RoundedCornerShape(12.dp),modifier=Modifier.fillMaxWidth().clickable{
+                    scope.launch{runCatching{Api.post("/api/notifications.php",s.token,JSONObject().put("id",n.id).put("action","read"))}.onSuccess{load()}}
+                }){
+                    Column(Modifier.padding(13.dp)){
+                        Text(n.title,fontWeight=FontWeight.Bold,color=if(n.read)Color.White else Dorado)
+                        Text(n.message,color=Gris)
+                        Text(n.created,fontSize=11.sp,color=Gris)
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 @Composable
 fun ManagedList(title:String,onBack:()->Unit,onAdd:()->Unit,error:String,showBack:Boolean=true,content:LazyListScope.()->Unit){
