@@ -53,7 +53,7 @@ private val Verde = Color(0xFF55B85A)
 private val Rojo = Color(0xFFE66767)
 private const val BASE_URL = "https://appbarberia.negociospyme.cl"
 
-data class Session(val token:String,val shopId:Long,val shopName:String,val slug:String,val userName:String,val email:String)
+data class Session(val token:String,val shopId:Long,val shopName:String,val slug:String,val userName:String,val email:String,val role:String)
 data class Barber(val id:Long,val name:String,val phone:String,val commission:Double,val active:Boolean)
 data class Service(val id:Long,val name:String,val price:Double,val duration:Int,val commission:Double?,val active:Boolean)
 data class Client(val id:Long,val name:String,val phone:String,val visits:Int,val spent:Double,val points:Int)
@@ -64,6 +64,7 @@ data class Dashboard(val appointments:Int,val sales:Double,val barbers:Int,val l
 data class WorkDay(val day:Int,val start:String,val end:String,val active:Boolean)
 data class TimeBlock(val id:Long,val barberId:Long,val date:String,val start:String,val end:String,val type:String,val reason:String)
 data class AppNotice(val id:Long,val title:String,val message:String,val read:Boolean,val created:String)
+data class StaffUser(val id:Long,val name:String,val email:String,val role:String,val active:Boolean,val barberId:Long,val barberName:String)
 
 
 class MainActivity: ComponentActivity(){
@@ -106,13 +107,14 @@ object Api {
     suspend fun login(email:String,password:String):Session{
         val j=post("/api/login.php",null,JSONObject().put("email",email).put("password",password))
         val u=j.getJSONObject("usuario"); val b=j.getJSONObject("barberia")
-        return Session(j.getString("token"),b.getLong("id"),b.getString("nombre"),b.optString("slug"),u.getString("nombre"),u.getString("email"))
+        return Session(j.getString("token"),b.getLong("id"),b.getString("nombre"),b.optString("slug"),u.getString("nombre"),u.getString("email"),u.optString("rol","barbero"))
     }
 }
 
 fun money(v:Double)=NumberFormat.getCurrencyInstance(Locale("es","CL")).format(v)
 fun today():String=SimpleDateFormat("yyyy-MM-dd",Locale.getDefault()).format(Date())
 fun monthStart():String=SimpleDateFormat("yyyy-MM-01",Locale.getDefault()).format(Date())
+fun roleLabel(role:String)=when(role){"dueno"->"Dueño";"admin"->"Administrador";"recepcionista"->"Recepción";"barbero"->"Barbero";else->role}
 fun JSONObject.str(k:String)=optString(k,"")
 fun JSONObject.long(k:String)=optLong(k,0L)
 fun JSONObject.dbl(k:String)=optDouble(k,0.0)
@@ -126,14 +128,14 @@ fun BarberiaCloudApp(){
     var session by remember{
         mutableStateOf(
             prefs.getString("token",null)?.let{
-                Session(it,prefs.getLong("shopId",0),prefs.getString("shopName","Barbería")!!,prefs.getString("slug","")!!,prefs.getString("userName","Usuario")!!,prefs.getString("email","")!!)
+                Session(it,prefs.getLong("shopId",0),prefs.getString("shopName","Barbería")!!,prefs.getString("slug","")!!,prefs.getString("userName","Usuario")!!,prefs.getString("email","")!!,prefs.getString("role","dueno")!!)
             }
         )
     }
     if(session==null){
         LoginScreen{ s->
             prefs.edit().putString("token",s.token).putLong("shopId",s.shopId).putString("shopName",s.shopName).putString("slug",s.slug)
-                .putString("userName",s.userName).putString("email",s.email).apply()
+                .putString("userName",s.userName).putString("email",s.email).putString("role",s.role).apply()
             session=s
         }
     }else{
@@ -179,10 +181,11 @@ private val navItems=listOf(
 @Composable
 fun CloudShell(s:Session,onLogout:()->Unit){
     var screen by remember{mutableStateOf("inicio")}
+    val visibleNav=navItems.filter{n-> !(s.role=="barbero" && n.key=="caja") }
     Scaffold(
         bottomBar={
             NavigationBar(containerColor=Color(0xFF161616)){
-                navItems.forEach{n->
+                visibleNav.forEach{n->
                     NavigationBarItem(selected=screen==n.key,onClick={screen=n.key},icon={Icon(n.icon,null)},label={Text(n.title)})
                 }
             }
@@ -205,6 +208,7 @@ fun CloudShell(s:Session,onLogout:()->Unit){
                 "qr"->QrScreen(s){screen="mas"}
                 "horarios"->ScheduleScreen(s){screen="mas"}
                 "avisos"->NotificationsScreen(s){screen="mas"}
+                "usuarios"->UsersScreen(s){screen="mas"}
             }
         }
     }
@@ -222,7 +226,7 @@ fun HomeScreen(s:Session,navigate:(String)->Unit,onLogout:()->Unit){
     LazyColumn(Modifier.fillMaxSize().background(Fondo),contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
         item{
             Row(verticalAlignment=Alignment.CenterVertically){
-                Column(Modifier.weight(1f)){Text(s.shopName,fontSize=26.sp,fontWeight=FontWeight.Bold);Text("Conectado a NegociosPyme Cloud",color=Verde)}
+                Column(Modifier.weight(1f)){Text(s.shopName,fontSize=26.sp,fontWeight=FontWeight.Bold);Text("Conectado · ${roleLabel(s.role)}",color=Verde)}
                 IconButton(onClick={load()}){Icon(Icons.Default.Refresh,null,tint=Dorado)}
             }
         }
@@ -238,12 +242,13 @@ fun HomeScreen(s:Session,navigate:(String)->Unit,onLogout:()->Unit){
             if(d.next.isEmpty()) item{Text("Sin próximas citas",color=Gris)} else items(d.next){CardLine(it)}
         }
         item{SectionTitle("Gestión rápida")}
-        item{MenuCard("Barberos","Equipo y comisiones",Icons.Default.ContentCut){navigate("barberos")}}
-        item{MenuCard("Servicios","Precios, duración y comisión",Icons.Default.Build){navigate("servicios")}}
-        item{MenuCard("Inventario","Productos y stock",Icons.Default.Inventory2){navigate("inventario")}}
-        item{MenuCard("Horarios","Disponibilidad real por barbero",Icons.Default.Schedule){navigate("horarios")}}
+        if(s.role=="dueno"||s.role=="admin") item{MenuCard("Usuarios y permisos","Dueño, admin, recepción y barberos",Icons.Default.ManageAccounts){navigate("usuarios")}}
+        if(s.role=="dueno"||s.role=="admin") item{MenuCard("Barberos","Equipo y comisiones",Icons.Default.ContentCut){navigate("barberos")}}
+        if(s.role=="dueno"||s.role=="admin") item{MenuCard("Servicios","Precios, duración y comisión",Icons.Default.Build){navigate("servicios")}}
+        if(s.role!="barbero") item{MenuCard("Inventario","Productos y stock",Icons.Default.Inventory2){navigate("inventario")}}
+        if(s.role=="dueno"||s.role=="admin") item{MenuCard("Horarios","Disponibilidad real por barbero",Icons.Default.Schedule){navigate("horarios")}}
         item{MenuCard("Avisos","Reservas y recordatorios",Icons.Default.Notifications){navigate("avisos")}}
-        item{MenuCard("Reportes","Ventas y comisiones",Icons.Default.BarChart){navigate("reportes")}}
+        if(s.role=="dueno"||s.role=="admin") item{MenuCard("Reportes","Ventas y comisiones",Icons.Default.BarChart){navigate("reportes")}}
         item{MenuCard("QR reservas","Link público para clientes",Icons.Default.QrCode2){navigate("qr")}}
         item{OutlinedButton(onClick=onLogout,modifier=Modifier.fillMaxWidth()){Text("Cerrar sesión")}}
     }
@@ -472,14 +477,15 @@ fun qrBitmap(text:String,size:Int):Bitmap?=runCatching{val m=MultiFormatWriter()
 fun MoreScreen(s:Session,navigate:(String)->Unit,onLogout:()->Unit){
     LazyColumn(Modifier.fillMaxSize().background(Fondo),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
         item{Text("Más",fontSize=26.sp,fontWeight=FontWeight.Bold)}
-        item{MenuCard("Barberos","Equipo y comisiones",Icons.Default.ContentCut){navigate("barberos")}}
-        item{MenuCard("Servicios","Precios y duración",Icons.Default.Build){navigate("servicios")}}
-        item{MenuCard("Inventario","Stock y productos",Icons.Default.Inventory2){navigate("inventario")}}
-        item{MenuCard("Horarios","Turnos, días libres y bloqueos",Icons.Default.Schedule){navigate("horarios")}}
+        if(s.role=="dueno"||s.role=="admin") item{MenuCard("Usuarios y permisos","Crear accesos y asignar roles",Icons.Default.ManageAccounts){navigate("usuarios")}}
+        if(s.role=="dueno"||s.role=="admin") item{MenuCard("Barberos","Equipo y comisiones",Icons.Default.ContentCut){navigate("barberos")}}
+        if(s.role=="dueno"||s.role=="admin") item{MenuCard("Servicios","Precios y duración",Icons.Default.Build){navigate("servicios")}}
+        if(s.role!="barbero") item{MenuCard("Inventario","Stock y productos",Icons.Default.Inventory2){navigate("inventario")}}
+        if(s.role=="dueno"||s.role=="admin") item{MenuCard("Horarios","Turnos, días libres y bloqueos",Icons.Default.Schedule){navigate("horarios")}}
         item{MenuCard("Avisos","Nuevas reservas y recordatorios",Icons.Default.Notifications){navigate("avisos")}}
-        item{MenuCard("Reportes","Ventas y comisiones",Icons.Default.BarChart){navigate("reportes")}}
+        if(s.role=="dueno"||s.role=="admin") item{MenuCard("Reportes","Ventas y comisiones",Icons.Default.BarChart){navigate("reportes")}}
         item{MenuCard("QR reservas","Página pública",Icons.Default.QrCode2){navigate("qr")}}
-        item{Text("${s.userName} · ${s.email}",color=Gris)}
+        item{Text("${s.userName} · ${s.email} · ${roleLabel(s.role)}",color=Gris)}
         item{OutlinedButton(onClick=onLogout,modifier=Modifier.fillMaxWidth()){Text("Cerrar sesión")}}
     }
 }
@@ -662,6 +668,128 @@ fun NotificationsScreen(s:Session,onBack:()->Unit){
             }
         }
     }
+}
+
+
+
+@Composable
+fun UsersScreen(s:Session,onBack:()->Unit){
+    var users by remember{mutableStateOf<List<StaffUser>>(emptyList())}
+    var barbers by remember{mutableStateOf<List<Barber>>(emptyList())}
+    var edit by remember{mutableStateOf<StaffUser?>(null)}
+    var create by remember{mutableStateOf(false)}
+    var error by remember{mutableStateOf("")}
+    val scope=rememberCoroutineScope()
+
+    fun load(){
+        scope.launch{
+            runCatching{
+                val ua=Api.get("/api/users.php",s.token).getJSONArray("items")
+                val ba=Api.get("/api/barbers.php",s.token).getJSONArray("items")
+                val u=List(ua.length()){i->
+                    val o=ua.getJSONObject(i)
+                    StaffUser(o.long("id"),o.str("nombre"),o.str("email"),o.str("rol"),o.bool("activo"),o.long("barbero_id"),o.str("barbero_nombre"))
+                }
+                val b=List(ba.length()){i->
+                    val o=ba.getJSONObject(i)
+                    Barber(o.long("id"),o.str("nombre"),o.str("telefono"),o.dbl("comision_pct"),o.bool("activo"))
+                }.filter{it.active}
+                Pair(u,b)
+            }.onSuccess{users=it.first;barbers=it.second;error=""}
+             .onFailure{error=it.message?:"Error"}
+        }
+    }
+
+    LaunchedEffect(Unit){load()}
+
+    ManagedList("Usuarios y permisos",onBack,{create=true},error){
+        items(users){u->
+            Surface(
+                color=Tarjeta,
+                shape=RoundedCornerShape(12.dp),
+                modifier=Modifier.fillMaxWidth().clickable{edit=u}
+            ){
+                Column(Modifier.padding(14.dp)){
+                    Row(verticalAlignment=Alignment.CenterVertically){
+                        Column(Modifier.weight(1f)){
+                            Text(u.name,fontWeight=FontWeight.Bold)
+                            Text("${u.email} · ${roleLabel(u.role)}",color=Gris)
+                            if(u.barberName.isNotBlank()) Text("Barbero: ${u.barberName}",color=Gris,fontSize=12.sp)
+                        }
+                        Text(if(u.active)"Activo" else "Inactivo",color=if(u.active)Verde else Rojo,fontSize=12.sp)
+                    }
+                }
+            }
+        }
+    }
+
+    if(create||edit!=null){
+        UserDialog(edit,barbers,{create=false;edit=null}){name,email,password,role,active,barberId->
+            scope.launch{
+                runCatching{
+                    Api.post("/api/users.php",s.token,JSONObject()
+                        .put("action","save")
+                        .put("id",edit?.id?:0)
+                        .put("nombre",name)
+                        .put("email",email)
+                        .put("password",password)
+                        .put("rol",role)
+                        .put("activo",if(active)1 else 0)
+                        .put("barbero_id",barberId))
+                }.onSuccess{create=false;edit=null;load()}
+                 .onFailure{error=it.message?:"Error"}
+            }
+        }
+    }
+}
+
+@Composable
+fun UserDialog(
+    u:StaffUser?,
+    barbers:List<Barber>,
+    dismiss:()->Unit,
+    save:(String,String,String,String,Boolean,Long)->Unit
+){
+    var name by remember{mutableStateOf(u?.name?:"")}
+    var email by remember{mutableStateOf(u?.email?:"")}
+    var password by remember{mutableStateOf("")}
+    var role by remember{mutableStateOf(u?.role?:"barbero")}
+    var active by remember{mutableStateOf(u?.active?:true)}
+    var barber by remember{mutableStateOf(barbers.firstOrNull{it.id==(u?.barberId?:0L)})}
+
+    AlertDialog(
+        onDismissRequest=dismiss,
+        title={Text(if(u==null)"Nuevo usuario" else "Editar usuario")},
+        text={
+            Column(Modifier.verticalScroll(rememberScrollState())){
+                OutlinedTextField(name,{name=it},label={Text("Nombre")},modifier=Modifier.fillMaxWidth())
+                OutlinedTextField(email,{email=it},label={Text("Correo")},modifier=Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    password,{password=it},
+                    label={Text(if(u==null)"Contraseña" else "Nueva contraseña (opcional)")},
+                    visualTransformation=PasswordVisualTransformation(),
+                    modifier=Modifier.fillMaxWidth()
+                )
+                Picker("Rol",roleLabel(role),listOf("Dueño","Administrador","Recepción","Barbero")){label->
+                    role=when(label){"Dueño"->"dueno";"Administrador"->"admin";"Recepción"->"recepcionista";else->"barbero"}
+                }
+                if(role=="barbero"){
+                    Picker(
+                        "Vincular a barbero",
+                        barber?.name?:"Sin vincular",
+                        listOf("Sin vincular")+barbers.map{it.name}
+                    ){n->barber=barbers.firstOrNull{it.name==n}}
+                }
+                Row(verticalAlignment=Alignment.CenterVertically){Switch(active,{active=it});Text(" Activo")}
+            }
+        },
+        confirmButton={
+            Button(onClick={save(name,email,password,role,active,barber?.id?:0L)}){
+                Text("Guardar")
+            }
+        },
+        dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}}
+    )
 }
 
 
